@@ -9,29 +9,38 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
+      - name: Checkout code (为了以后可能用到，本步其实对纯 SSH 不必须)
         uses: actions/checkout@v4
 
-      - name: Deploy via SSH
+      - name: Deploy via SSH to Korea
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: 45.93.30.190
           username: root
           port: 22
-          key: ${{ secrets.SSH_KEY_PDFSEARCH }}
+          key: ${{ secrets.DEPLOY_KEY }}   # ✅ 这里用你现有的那个私钥 Secret 名
           script: |
             set -e
+
+            echo "== 1. 切到项目目录 =="
             cd /root/pdfsearch
+
+            echo "== 2. 拉取最新代码 =="
             git pull
 
-            # 更新后端依赖（如有变动）
+            echo "== 3. 激活 venv 并安装依赖（以防 requirements 更新） =="
             source venv/bin/activate
             pip install --no-cache-dir -r requirements.txt
             deactivate
 
-            # 用仓库里的真实前端覆盖 nginx 目录
+            echo "== 4. 同步前端到 /var/www/gfwzb.com =="
             mkdir -p /var/www/gfwzb.com
-            rsync -av --delete /root/pdfsearch/site_frontend/ /var/www/gfwzb.com/
+            cp site_frontend/* /var/www/gfwzb.com/
 
-            # 重启后端服务
+            echo "== 5. 重启后端服务 =="
             systemctl restart pdfsearch
+
+            echo "== 6. 简单健康检查 =="
+            curl -f http://127.0.0.1:9000/api/health || exit 1
+
+            echo "== 部署完成 =="
