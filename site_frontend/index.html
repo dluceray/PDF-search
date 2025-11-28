@@ -1,0 +1,667 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>合同检索 · PDF Search</title>
+<style>
+:root{
+  --bg:#ffffff; --card:#ffffff; --text:#111; --sub:#5f6368; --line:#e5e5ea;
+  --accent:#007aff; --accent-press:#0062d6; --ok:#34c759;
+  --radius:14px; --shadow:0 8px 24px rgba(17,17,17,.06);
+  --font:-apple-system,BlinkMacSystemFont,"SF Pro Text","SF Pro Display","Helvetica Neue",Arial,"PingFang SC","Hiragino Sans GB","Segoe UI",Roboto,"Noto Sans CJK SC","Microsoft YaHei",sans-serif;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.6 var(--font);-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+.container{max-width:1100px;margin:48px auto;padding:0 20px}
+.header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
+.h1{font-size:22px;font-weight:700;letter-spacing:.2px}
+.sub{color:var(--sub);font-size:12px}
+.badge{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border:1px solid var(--line);border-radius:999px;background:#fafafa;color:#6b7280;font-size:12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:18px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media (max-width:900px){.grid{grid-template-columns:1fr}}
+label{display:block;margin:8px 0 6px;color:#3c3c43;opacity:.8;font-size:12px}
+input{width:100%;height:40px;padding:8px 12px;border:1px solid #dadada;border-radius:12px;background:#fafafa;color:#111;outline:none;transition:border-color .16s,box-shadow .16s,background .16s}
+input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(0,122,255,.12);background:#fff}
+.row{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
+@media (max-width:700px){.row{grid-template-columns:1fr}}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:40px;padding:0 16px;border-radius:12px;border:1px solid #cfcfd3;background:#f6f6f7;color:#111;cursor:pointer;transition:transform .12s,background .12s,border-color .12s}
+.btn:hover{background:#f1f1f2}.btn:active{transform:translateY(1px)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.primary:hover{background:#1380ff}.btn.primary:active{background:var(--accent-press)}
+.btn.ok{background:#eef9f1;border-color:#d8f2df;color:#138a3b}
+.kv{display:flex;align-items:center;gap:10px}
+.dot{width:8px;height:8px;border-radius:50%;background:#9aa0a6}.dot.ok{background:var(--ok)}
+.tableWrap{margin-top:16px;border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;background:#fff;box-shadow:var(--shadow)}
+table{width:100%;border-collapse:collapse}
+thead th{position:sticky;top:0;background:#fafafa;border-bottom:1px solid var(--line);font-weight:600;font-size:12px;color:#3c3c43;opacity:.9}
+th,td{padding:10px 12px;border-bottom:1px solid #f0f0f0;vertical-align:top}
+tbody tr:hover{background:#fafcff}
+td.clip{max-width:280px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+a.link{color:var(--accent);text-decoration:none}a.link:hover{text-decoration:underline}
+.note{color:#8e8e93;font-size:12px;margin-top:6px}
+small.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;color:#6b7280}
+.toast{position:fixed;right:16px;bottom:16px;background:#fff;border:1px solid var(--line);padding:10px 12px;border-radius:12px;box-shadow:var(--shadow);opacity:0;transform:translateY(8px);transition:.2s}
+.toast.show{opacity:1;transform:translateY(0)}
+.spinner{width:16px;height:16px;border-radius:999px;border:2px solid #e5e5ea;border-top-color:var(--accent);animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+
+  <style id="FE_BTN_STYLE">
+  .action-bar{
+    display:inline-flex; gap:.4rem; align-items:center;
+    flex-wrap:nowrap; white-space:nowrap; vertical-align:middle;
+  }
+  .btn-open,.btn-download{
+    display:inline-flex; align-items:center; justify-content:center;
+    padding:.28rem .62rem; border-radius:9999px;
+    font-size:13px; line-height:1.1; letter-spacing:.02em;
+    border:1px solid #111; text-decoration:none; user-select:none;
+    transition:background .15s ease, transform .06s ease, filter .15s ease;
+  }
+  .btn-open{ color:#fff; background:#000; }
+  .btn-open:hover{ filter:brightness(1.05); transform:translateY(-1px); }
+  .btn-download{ color:#111; background:#fff; }
+  .btn-download:hover{ background:#f2f2f2; transform:translateY(-1px); }
+  .btn-open:active,.btn-download:active{ transform:translateY(0); }
+  .btn-open .ico,.btn-download .ico{
+    width:.95em; height:.95em; margin-right:.3em; display:inline-block;
+  }
+</style>
+
+
+<style id="RESPONSIVE_COMPACT_V1">
+/* —— 顶部抬头更紧凑 —— */
+.container{max-width:1100px;margin:32px auto;padding:0 16px}
+.header{margin-bottom:10px}
+.h1{font-size:20px;line-height:1.25}
+
+/* —— 卡片更薄 —— */
+.card{padding:12px 12px 10px;border-radius:12px}
+
+/* —— 查询区做成 3 列（桌面），控件更矮 —— */
+#searchCard .row{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+#searchCard label{margin:4px 0 4px;font-size:11px;opacity:.75}
+#searchCard input{height:32px;padding:4px 10px;border-radius:10px}
+
+/* 登录卡不受 3 列影响（仍两列） */
+#loginCard .row{grid-template-columns:1fr auto}
+
+/* 操作按钮更紧凑 */
+.btn{height:32px;padding:0 12px;border-radius:10px}
+.btn.primary,.btn.ok{line-height:30px}
+
+/* —— 表格在手机上可横向滚动，避免挤压 —— */
+.tableWrap{overflow:auto}
+@media (max-width:900px){
+  /* 中屏两列 */
+  #searchCard .row{grid-template-columns:repeat(2,1fr)}
+}
+@media (max-width:640px){
+  /* 小屏一列，控件再瘦一点 */
+  #searchCard .row{grid-template-columns:1fr}
+  #searchCard input{height:30px}
+  .container{margin:18px auto;padding:0 12px}
+  .card{padding:10px}
+  table{min-width:720px} /* 允许左右滑 */
+}
+</style>
+
+
+<style id="HDR_LOGOUT_CSS">
+#btnLogoutHdr{
+  display:none; /* 仅登录后显示，由 JS 控制 */
+  margin-left:10px; height:30px; padding:0 12px; border-radius:10px;
+  border:1px solid var(--line); background:#fff; color:#111; cursor:pointer;
+  font-size:13px; line-height:28px; vertical-align:middle;
+}
+#btnLogoutHdr:hover{ background:#f5f5f7 }
+#btnLogoutHdr:active{ background:#ededf0 }
+@media (max-width:640px){
+  #btnLogoutHdr{ height:28px; line-height:26px; padding:0 10px; font-size:12px }
+}
+</style>
+
+
+
+
+
+<style>
+.pager-compact{display:inline-flex;gap:6px;align-items:center;margin-left:8px;vertical-align:middle}
+.pager-compact .range{font-size:12px;opacity:.8;font-variant-numeric:tabular-nums}
+</style></head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div>
+        <div class="h1">合同检索</div>
+      </div>
+      <div class="kv"><div class="spinner" id="spin" style="display:none"></div><span id="state" class="badge"><span class="dot" id="d"></span> 未登录</span></div>
+    </div>
+
+    <div class="grid">
+      <!-- 登录 -->
+      <section class="card" id="loginCard">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <strong>登录</strong>
+        </div>
+        <div class="row" style="grid-template-columns:1fr auto">
+          <div>
+            <label>密码</label>
+            <input id="pwd" type="password" autocomplete="current-password"/ autocapitalize="off" autocorrect="off" spellcheck="false" name="noauto-pwd">
+            <div class="note">登录成功后自动保存令牌（24 小时有效）。</div>
+          </div>
+          <div style="align-self:end;display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn primary" id="btnLogin">登录</button>
+            <button class="btn" id="btnLogout">退出</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- 查询 -->
+      <section class="card" id="searchCard" style="display:none">
+        <strong>查询条件</strong>
+        <div class="row" style="margin-top:6px">
+          <div><label>工程地点及内容</label><input id="loc" placeholder="例如：新区道路"/ autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" name="noauto-loc"></div>
+          <div><label>单位名称</label><input id="unit" placeholder="例如：XX 建设"/ autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" name="noauto-unit"></div>
+          <div><label>合同编号</label><input id="no" placeholder="精确或部分编号"/ autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" name="noauto-no"></div>
+          <div><label>签订日期（年/年月/年月日）</label><input id="dt" placeholder="2025 或 2025-08"/ autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" name="noauto-dt"></div>
+          <div><label>合同额（数值等价；填0=忽略）</label><input id="amt" placeholder="如：1000000 或 1,000,000"/ autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" name="noauto-amt"></div>
+        </div>
+        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn ok" id="go">查询</button>
+          <span class="badge" id="count">0 条</span>
+</div>
+      </section>
+    </div>
+
+    <!-- 表格 -->
+    <div class="tableWrap" id="tableWrap" style="display:none">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:80px">序号</th>
+            <th>工程地点及内容</th>
+            <th>单位名称</th>
+            <th style="width:120px">签订日期</th>
+            <th style="width:110px">合同额</th><th style="width:80px">PDF</th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+<script>
+const $=s=>document.querySelector(s);
+let TOKEN = localStorage.getItem('X_AUTH') || '';
+function toast(t){const el=$("#toast"); el.textContent=t; el.classList.add('show'); setTimeout(()=>el.classList.remove('show'), 2000);}
+function busy(on){ $("#spin").style.display=on?'inline-block':'none'; }
+function setLoginUI(ok){
+  
+  // /*CLEAR_FORM_ON_LOGIN*/
+  try{
+    if (ok) {
+      ["loc","unit","no","dt","amt"].forEach(function(id){
+        var el=document.getElementById(id); if(el) el.value="";
+      });
+      var tb=document.getElementById("tbody"); if(tb) tb.innerHTML="";
+      var c=document.getElementById("count"); if(c) c.textContent="0 条";
+    }
+  }catch(e){}
+$("#state").innerHTML = (ok?'<span class="dot ok"></span> 已登录':'<span class="dot"></span> 未登录');
+  $("#loginCard").style.display = ok ? "none" : "block";
+  $("#searchCard").style.display = ok ? "block" : "none";
+  $("#tableWrap").style.display = ok ? "block" : "none";
+}
+async function loginPOST(pwd){ return fetch('/api/mdirs/login',{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({password:pwd})}); }
+async function loginGET(pwd){ return fetch('/api/mdirs/login?password='+encodeURIComponent(pwd)); }
+async function doLogin(pwd){
+  busy(true);
+  try{
+    let r = await loginPOST(pwd);
+    if(!r.ok){ r = await loginGET(pwd); }
+    if(!r.ok) throw new Error("登录失败");
+    const j = await r.json();
+    TOKEN = j.token; localStorage.setItem('X_AUTH', TOKEN);
+    setLoginUI(true); toast("登录成功");
+  }catch(e){ toast(e.message||"登录失败"); }
+  finally{ busy(false); }
+}
+$("#btnLogin").onclick=()=>doLogin($("#pwd").value.trim());
+$("#btnLogout").onclick=()=>{ localStorage.removeItem('X_AUTH'); TOKEN=''; setLoginUI(false); toast("已退出"); };
+if(TOKEN){ setLoginUI(true); }
+
+$("#go").onclick = async ()=>{
+// PATCH: new-search reset
+if (!window.__viaPager) {
+  try{
+    if (window.PAGER) {
+      window.PAGER.offset = 0;
+      window.PAGER.size = 50;
+    }
+    var sel = document.getElementById('pgSize');
+    if (sel) sel.value = '50';
+  }catch(e){}
+}
+window.__viaPager = false;
+// END PATCH
+
+  /* removed: unconditional clear offset */
+busy(true);
+  $("#count").textContent="查询中…";
+  try{
+    const body={
+      "工程地点及内容": $("#loc").value.trim(),
+      "单位名称": $("#unit").value.trim(),
+      "合同编号": $("#no").value.trim(),
+      "签订日期": $("#dt").value.trim(),
+      "合同额": $("#amt").value.trim()
+    };
+
+
+    const r=await fetch('/api/search',{method:'POST',
+      headers:{'Content-Type':'application/json','X-Auth': TOKEN},
+      body:JSON.stringify(body)});
+    if(r.status===401){ localStorage.removeItem('X_AUTH'); TOKEN=''; setLoginUI(false); toast("登录失效，请重新登录"); return; }
+    const j=await r.json();
+    $("#count").textContent=((j.count_strict|0)||(j.count|0)||0)+" 条";
+    const tb=$("#tbody"); tb.innerHTML="";
+    (j.items||[]).forEach(x=>{
+      const tr=document.createElement('tr');
+      const link = x.pdf_path
+  ? `<div class="action-bar">
+        <a class="btn-open" href="${x.pdf_path}" target="_blank" rel="noopener"><span class="ico">↗</span>打开</a>
+        ${x.pdf_dl ? `<a class="btn-download" href="${x.pdf_dl}" target="_blank" rel="noopener" download><span class="ico">⬇</span>下载</a>` : ``}
+     </div>`
+  : `<span class="sub">无</span>`;
+      tr.innerHTML=`
+        <td>${x["序号"]||""}</td>
+        <td class="clip" title="${(x["工程地点及内容"]||"").replace(/"/g,'&quot;')}">${x["工程地点及内容"]||""}</td>
+        <td class="clip" title="${(x["单位名称"]||"").replace(/"/g,'&quot;')}">${x["单位名称"]||""}</td>
+        <td>${x["签订日期"]||""}</td>
+        <td>${x["合同额"]||""}</td><td>${link}</td>`;
+      tb.appendChild(tr);
+    });
+  }catch(e){ toast("请求失败"); }
+  finally{ busy(false); }
+};
+</script>
+<script>(function(){
+  function safeDoSearch(){
+    if (typeof window.doSearch === "function") { window.doSearch(); return; }
+    var btn = document.querySelector("#searchCard .btn.ok, #searchCard button");
+    if (btn) btn.click();
+  }
+  document.addEventListener("DOMContentLoaded", function(){
+    var box = document.getElementById("searchCard"); if(!box) return;
+    box.addEventListener("keydown", function(e){
+      if (e.key === "Enter" && !e.isComposing && e.target && e.target.tagName === "INPUT") {
+        e.preventDefault(); safeDoSearch();
+      }
+    });
+  });
+})();</script>
+  <script>/*FE_YEAR_FIX*/
+  (function(){
+    if (!window.fetch) return; const of = window.fetch;
+    function normDate(s){
+      if(!s) return s;
+      s = String(s).trim().replace(/年/g,"-").replace(/月/g,"-").replace(/日/g,"");
+      s = s.replace(/[._\/\\\s]+/g, "-");
+      // YYYY-M / YYYY-MM-D / YYYY-M-D 补零
+      var m = s.match(/^(\d{4})(?:-(\d{1,2}))?(?:-(\d{1,2}))?$/);
+      if (!m) return s;
+      var y=m[1], mm=m[2], dd=m[3];
+      if (!mm) return y+"-";
+      mm = ("0"+mm).slice(-2);
+      if (!dd) return y+"-"+mm;
+      dd = ("0"+dd).slice(-2);
+      return y+"-"+mm+"-"+dd;
+    }
+    window.fetch = function(input, init){
+      try{
+        if (typeof input==="string" && input.indexOf("/api/search")!==-1 && init && init.body){
+          var obj={}; try{ obj=JSON.parse(init.body||"{}"); }catch(e){}
+          var d = obj["签订日期"];
+          if (d!=null) obj["签订日期"] = normDate(d);
+          init.body = JSON.stringify(obj);
+        }
+      }catch(e){}
+      return of.apply(this, arguments);
+    };
+  })();
+  </script>
+
+<script id="NO_PWD_PLACEHOLDER">
+document.addEventListener('DOMContentLoaded',function(){
+  document.querySelectorAll('input[type="password"]').forEach(function(el){ try{ el.placeholder=""; }catch(e){} });
+});
+</script>
+
+
+<script id="HDR_LOGOUT_SNIPPET">
+document.addEventListener('DOMContentLoaded', function(){
+  var kv = document.querySelector('.header .kv') || document.querySelector('.kv') || document.body;
+  if(!document.getElementById('btnLogoutHdr')){
+    var b=document.createElement('button');
+    b.id='btnLogoutHdr'; b.className='btn'; b.textContent='退出';
+    kv && kv.appendChild(b);
+    b.onclick=function(){
+      try{ localStorage.removeItem('X_AUTH'); }catch(e){}
+      if(typeof TOKEN!=='undefined') TOKEN='';
+      if(typeof setLoginUI==='function') setLoginUI(false);
+      if(typeof toast==='function') toast('已退出');
+    };
+  }
+  // 包装 setLoginUI，使其顺便控制头部按钮显隐
+  if(typeof setLoginUI==='function' && !window._setLoginUI_patched){
+    var _orig=setLoginUI;
+    window.setLoginUI=function(ok){
+      try{ _orig(ok); }catch(e){}
+      var bb=document.getElementById('btnLogoutHdr');
+      if(bb) bb.style.display = ok ? 'inline-flex' : 'none';
+    };
+    window._setLoginUI_patched = true;
+  }
+  // 初始显隐（根据 TOKEN）
+  try{
+    var t = (typeof TOKEN!=='undefined' && TOKEN) || (localStorage.getItem('X_AUTH')||'');
+    var bb=document.getElementById('btnLogoutHdr');
+    if(bb) bb.style.display = t ? 'inline-flex' : 'none';
+  }catch(e){}
+});
+</script>
+
+
+<script id="HDR_MAINT_BTN">
+document.addEventListener('DOMContentLoaded', function(){
+  var kv = document.querySelector('.header .kv') || document.querySelector('.kv') || document.body;
+  if(!document.getElementById('btnMaintHdr')){
+    var b=document.createElement('button');
+    b.id='btnMaintHdr'; b.className='btn'; b.textContent='更新';
+    b.setAttribute('aria-label','更新'); b.title='更新'; b.style.marginLeft='10px'; b.style.display='none';
+    if(kv){ kv.appendChild(b); }
+
+    // 点击：一次性口令 + 调维护端点
+    b.onclick = async function(){
+      var s = (prompt('请输入口令')||'').trim().toLowerCase();
+      if(!s){ if(window.toast) toast('已取消'); return; }
+      if(s !== 'shigeba'){ if(window.toast) toast('口令错误'); return; }
+      try{
+        if(window.busy) busy(true);
+        const r = await fetch('/api/maint/append',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({secret:s})});
+        const j = await r.json().catch(()=>({}));
+        if(r.ok){ if(window.toast) toast('维护完成'); }
+        else { if(window.toast) toast('维护失败'); console.log(j); }
+      }catch(e){ if(window.toast) toast('请求失败'); }
+      finally{ if(window.busy) busy(false); }
+    };
+  }
+  // 按登录态显示/隐藏。和退出按钮同策略：
+  if(typeof setLoginUI==='function' && !window._maint_btn_patched){
+    var _orig=setLoginUI;
+    window.setLoginUI=function(ok){
+      try{ _orig(ok); }catch(e){}
+      var m=document.getElementById('btnMaintHdr'); if(m) m.style.display = ok ? 'inline-flex' : 'none';
+    };
+    window._maint_btn_patched = true;
+  }
+  // 首次显隐
+  try{
+    var t=(typeof TOKEN!=='undefined'&&TOKEN)||(localStorage.getItem('X_AUTH')||'');
+    var m=document.getElementById('btnMaintHdr'); if(m) m.style.display = t ? 'inline-flex' : 'none';
+  }catch(e){}
+});
+</script>
+
+
+
+<script id="RESET_SEARCH_FIELDS">
+(function(){
+  function clearFields(){
+    ["loc","unit","no","dt","amt"].forEach(function(id){
+      var el = document.getElementById(id);
+      if(el){ el.value=""; try{ el.dispatchEvent(new Event("input",{bubbles:true})); }catch(e){} }
+    });
+  }
+  // 首次加载清空
+  window.addEventListener("DOMContentLoaded", clearFields, {once:true});
+  // 浏览器后退/缓存恢复也清空
+  window.addEventListener("pageshow", function(e){ if(e.persisted) clearFields(); });
+})();
+</script>
+
+
+
+
+<script id="PAGER_JS_V3">
+(function(){
+  if (window.__pager_v3_installed) return; window.__pager_v3_installed = true;
+
+  // 全局分页状态
+  const PAGER = window.PAGER = { size: 50, offset: 0, total: 0 };
+
+  // 轻量样式
+  if (!document.getElementById('PAGER_CSS_V3')) {
+    const css = document.createElement('style'); css.id='PAGER_CSS_V3';
+    css.textContent = `
+      .pager{display:flex;gap:.5rem;align-items:center;margin:8px 0 2px;font-size:12px}
+      .pager button,.pager select{border:1px solid #e5e5e5;background:#fff;border-radius:8px;padding:6px 10px;font-size:12px;line-height:1.2}
+      .pager .muted{opacity:.65}
+      .pager button[disabled]{opacity:.5;cursor:not-allowed}
+      /* 让整条与“查询”按钮同一基线并略微上调，修正视觉下沉 */
+      .pager-compact{display:inline-flex;gap:.5rem;align-items:center;margin-left:8px;vertical-align:middle;position:relative;top:-1px}
+      .pager-compact .range{font-variant-numeric:tabular-nums}
+      /* 占位，把“每页选择”推到这条控件的最右侧 */
+      .pager-spacer{flex:1 1 auto;min-width:12px}
+`;
+    document.head.appendChild(css);
+  }
+
+  // 把控件放在“查询按钮/条数徽标”所在那一行（紧凑在右侧）
+  const badge = document.querySelector('#count');
+  const host  = (badge && badge.parentElement) || document.body;
+
+  const bar = document.createElement('div');
+  bar.id='pagerBar';
+  bar.className='pager pager-compact';
+  bar.innerHTML = `
+    <button type="button" id="pgPrev">上一页</button>
+    <button type="button" id="pgNext">下一页</button>
+    <span id="pgRange" class="range"></span>
+    <span class="pager-spacer"></span>
+    <label class="muted">每页</label>
+    <select id="pgSize">
+      <option value="50">50</option>
+      <option value="100">100</option>
+      <option value="200">200</option>
+    </select>
+  `;
+  try { host.appendChild(bar); } catch(e) { document.body.appendChild(bar); }
+
+  function refreshPager(){
+    try { bar.style.display = 'inline-flex'; } catch(e){}
+    const off  = (PAGER.offset|0);
+    const size = (PAGER.size|0) || 50;
+    const tot  = (PAGER.total|0);
+
+    const hasPrev = off > 0;
+    const hasNext = off + size < tot;
+
+    const btnPrev = document.getElementById('pgPrev');
+    const btnNext = document.getElementById('pgNext');
+    const selSize = document.getElementById('pgSize');
+    const rg      = document.getElementById('pgRange');
+
+    if (btnPrev) btnPrev.disabled = !hasPrev;
+    if (btnNext) btnNext.disabled = !hasNext;
+    if (selSize && String(selSize.value) !== String(size)) selSize.value = String(size);
+
+    if (rg){
+        const start = tot ? (off + 1) : 0;
+        const end   = Math.min(off + size, tot);
+        const strictTot = tot; rg.textContent = start + "-" + end + " / " + strictTot; rg.title = "当前范围 / 命中（序号）条数" + (window.__dirTotal? `；目录总数=${window.__dirTotal}` : "");
+      }
+  }
+
+  // 拦截 /api/search：补齐 offset/limit；并在返回后更新 total+UI
+  const ofetch = window.fetch;
+  window.fetch = async function(input, init){
+    const url = (typeof input==='string') ? input : (input && input.url) || '';
+    if (url.indexOf('/api/search') !== -1 && init && init.method && String(init.method).toUpperCase()==='POST' && typeof init.body === 'string'){
+      try{
+        const body = JSON.parse(init.body || '{}');
+        body.offset = PAGER.offset|0;
+        body.limit  = PAGER.size|0 || 50;
+        init.body = JSON.stringify(body);
+      }catch(e){}
+    }
+    const resp = await ofetch.apply(this, arguments);
+    try{
+      if (url.indexOf('/api/search') !== -1) {
+        const j = await resp.clone().json();
+        if (j){ PAGER.total = ((j.count_strict|0) || (j.count|0) || 0); }
+            try{
+              const r2 = await ofetch('/api/entries/count');
+              const j2 = await r2.json();
+              if (j2 && (j2.ok===true || j2.ok==='true')) {
+                window.__dirTotal = (j2.total_all|0) || (j2.total_strict|0) || 0;
+              }
+            }catch(e){}
+            refreshPager();
+      }
+    }catch(e){}
+    return resp;
+  };
+
+  // 事件：上一页 / 下一页 / 每页
+  const goBtn = document.querySelector('#go');
+  document.getElementById('pgPrev').addEventListener('click', function(){
+    window.__viaPager = true;
+    PAGER.offset = Math.max(0, (PAGER.offset|0) - (PAGER.size|0));
+    goBtn && goBtn.click();
+  });
+  document.getElementById('pgNext').addEventListener('click', function(){
+    window.__viaPager = true;
+    PAGER.offset = Math.min(Math.max(0,(PAGER.total|0)-1), (PAGER.offset|0) + (PAGER.size|0));
+    goBtn && goBtn.click();
+  });
+  document.getElementById('pgSize').addEventListener('change', function(e){
+    window.__viaPager = true;
+    const v = parseInt(e.target.value, 10) || 50;
+    PAGER.size = v; PAGER.offset = 0;
+    goBtn && goBtn.click();
+  });
+
+      // 页面加载即获取目录总数
+    try{
+      fetch('/api/entries/count').then(r=>r.json()).then(j2=>{
+        if (j2 && (j2.ok===true || j2.ok==='true')) { window.__dirTotal = (j2.total_all|0) || (j2.total_strict|0) || 0; }
+        refreshPager();
+      }).catch(()=>{});
+    }catch(e){}
+// 初次渲染
+  refreshPager();
+  // 暴露调试
+  window.__pager = PAGER;
+})();
+</script>
+
+
+
+<!-- BEIAN: plain static footer (non-floating) -->
+<footer class="beian-footer-static">
+  <a class="icp" href="https://beian.miit.gov.cn/#/Integrated/index" target="_blank" rel="noopener nofollow">津ICP备2025037270号-1</a>
+  <span class="sep">|</span>
+  <a class="ga" href="http://www.beian.gov.cn/portal/registerSystemInfo?recordcode=12010202001234" target="_blank" rel="noopener nofollow">
+    <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" style="vertical-align:-2px;margin-right:4px">
+      <path d="M12 2c3 1.9 6 2.9 9 3-1 8-4.2 13.5-9 17-4.8-3.5-8-9-9-17 3-.1 6-1.1 9-3z" fill="currentColor" fill-opacity="0.65"/>
+    </svg>
+    津公网安备 12010202001234 号
+  </a>
+</footer>
+<style>
+  /* —— 非悬浮，固定在页面底部（随文档流） —— */
+  .beian-footer-static{
+    max-width:1100px; margin:28px auto 18px; padding-top:12px;
+    border-top:1px solid #e5e7eb; text-align:center;
+    font:12px/1.7 system-ui,-apple-system,Segoe UI,Arial,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    color:#64748b;
+  }
+  .beian-footer-static a{ color:inherit; text-decoration:none; }
+  .beian-footer-static a:hover{ text-decoration:underline; }
+  .beian-footer-static .sep{ margin:0 8px; color:#94a3b8; }
+  @media (prefers-color-scheme: dark){
+    .beian-footer-static{ border-top-color:#3f3f46; color:#cbd5e1; }
+    .beian-footer-static .sep{ color:#6b7280; }
+  }
+</style>
+<!-- /BEIAN -->
+
+<script id="PDF_LINK_FIX_V2">
+(function(){
+  function getToken(){
+    try { return (typeof TOKEN!=='undefined' && TOKEN) ? TOKEN : (localStorage.getItem('X_AUTH')||''); }
+    catch(e){ return ''; }
+  }
+  function toURL(href){
+    try { return new URL(href, location.origin); } catch(e){ return null; }
+  }
+  function isSameSite(u){
+    try {
+      var hosts=[location.hostname,'gfwzb.com','www.gfwzb.com','81.70.93.250'];
+      return hosts.indexOf(u.hostname)!==-1;
+    }catch(e){ return false; }
+  }
+  function isApi(u){ try{ return u.pathname.indexOf('/api/')===0; }catch(e){ return false; } }
+
+  document.addEventListener('click', function(e){
+    var a = e.target && e.target.closest && e.target.closest('a.btn-open, a.btn-download');
+    if(!a) return;
+    var href=a.getAttribute('href')||''; if(!href) return;
+
+    var u = toURL(href); if(!u) return;
+
+    // —— 先把同站点的 http 链接升级为 https（解决“混合内容”）——
+    if (u.protocol==='http:' && isSameSite(u)) {
+      u.protocol='https:';
+    }
+
+    // —— 非 /api/ 的 https 链接，放行（照常打开/下载）——
+    if (!isApi(u)) { a.setAttribute('href', u.toString()); return; }
+
+    // —— 命中 /api/：用 fetch 携带令牌获取 Blob，再打开/下载 —— 
+    e.preventDefault();
+    var token=getToken();
+    if(!token){ try{ if(window.toast) toast('请先登录'); }catch(_){ } return; }
+
+    fetch(u.toString(), { headers: { 'X-Auth': token } })
+      .then(function(resp){
+        if(!resp.ok) throw new Error('获取失败: '+resp.status);
+        return resp.blob();
+      })
+      .then(function(blob){
+        var url = URL.createObjectURL(blob);
+        if (a.classList.contains('btn-download') || a.hasAttribute('download')) {
+          var name = (u.pathname.split('/').pop()||'file').replace(/[?#].*$/,'');
+          var tmp=document.createElement('a'); tmp.href=url; tmp.download=name; document.body.appendChild(tmp);
+          tmp.click(); setTimeout(function(){document.body.removeChild(tmp);},0);
+        } else {
+          window.open(url, '_blank', 'noopener');
+        }
+        setTimeout(function(){ URL.revokeObjectURL(url); }, 20000);
+      })
+      .catch(function(err){
+        try{ if(window.toast) toast('下载失败'); }catch(_){}
+        console.error('[PDF link fix]', err);
+      });
+  }, true);
+})();
+</script>
+<script id="enter-login-pwd">document.addEventListener('DOMContentLoaded',function(){var inp=document.getElementById('pwd'); if(!inp) return;inp.addEventListener('keydown',function(e){ if(e.key==='Enter'&&!e.isComposing){ e.preventDefault();   try{ if(typeof doLogin==='function'){ doLogin((inp.value||'').trim()); } }catch(_){ } }}, true);});</script></body>
+  </html>

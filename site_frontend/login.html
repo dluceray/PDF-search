@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>登录</title>
+  <style>
+    body{font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,Apple Color Emoji,Segoe UI Emoji;background:#f6f7f9;margin:0;}
+    .wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;}
+    .card{background:#fff;width:100%;max-width:420px;border-radius:16px;box-shadow:0 8px 24px rgba(0,0,0,.08);padding:28px;}
+    .title{margin:0 0 12px;font-size:20px;}
+    .row{display:flex;flex-direction:column;gap:8px;margin:14px 0;}
+    input[type=password]{padding:12px 14px;border:1px solid #d9dbe0;border-radius:10px;font-size:16px;outline:none}
+    input[type=password]:focus{border-color:#6b8cff;box-shadow:0 0 0 3px rgba(107,140,255,.2)}
+    button{width:100%;padding:12px 14px;border:0;border-radius:10px;font-size:16px;cursor:pointer;background:#6b8cff;color:#fff}
+    button:disabled{opacity:.6;cursor:not-allowed}
+    .hint{color:#7a7f87;font-size:12px;margin-top:6px}
+    .err{color:#d93025;font-size:13px;min-height:18px}
+  </style>
+  
+</head>
+
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1 class="title">登录</h1>
+
+      <!-- 规范表单结构：原生回车=提交；我们在 onsubmit 里统一调 doLogin() -->
+      <form id="loginForm" onsubmit="doLogin();return false;">
+        <div class="row">
+          <label for="password">密码</label>
+          <input id="password" name="password" type="password" placeholder="请输入密码" autocomplete="current-password" autofocus form="loginForm" />
+          <div class="hint">输入密码后直接按 Enter 即可</div>
+          <div id="err" class="err"></div>
+        </div>
+        <button id="loginBtn" type="submit" onclick="doLogin();return false;">登录</button>
+      </form>
+    </div>
+  </div>
+<script id="login-json-fix">async function doLogin(){var inp=document.querySelector('#password,#pwd,input[type=password],input[name=password]');var msg=document.getElementById('err');var pwd=(inp&&inp.value||'').trim();if(msg) msg.textContent='';if(!pwd){ if(msg) msg.textContent='请输入密码'; if(inp) inp.focus(); return false; }try{var r=await fetch('/api/mdirs/login',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify({password:pwd})});if(r.ok){location.href='/';return false;}var t='';try{t=await r.text();}catch(_){ } if(msg) msg.textContent=t?('登录失败：'+t.slice(0,120)):'登录失败';return false;}catch(e){if(msg) msg.textContent='网络错误';return false;}}</script></body>
+</html>
