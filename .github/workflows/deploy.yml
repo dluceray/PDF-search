@@ -12,28 +12,30 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Deploy to Korea via SSH key
+      - name: Deploy to Korea via SSH
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: 45.93.30.190
           username: root
           port: 22
-          key: ${{ secrets.KOREA_DEPLOY_KEY }}
+
+          # ★★★ 这里用你的私钥 secret 名字 ★★★
+          key: ${{ secrets.DEPLOY_KEY }}
+
           script: |
             set -e
             echo "== [1] go to project dir =="
             cd /root/pdfsearch
 
-            echo "== [2] git pull from GitHub =="
+            echo "== [2] git pull =="
             git pull
 
-            echo "== [3] update dependencies in venv =="
+            echo "== [3] update dependencies =="
             source venv/bin/activate
             pip install --no-cache-dir -r requirements.txt
             deactivate
 
-            echo "== [4] restart pdfsearch service =="
+            echo "== [4] restart service =="
             systemctl restart pdfsearch
-            systemctl status pdfsearch --no-pager --full | head -n 20
 
-            echo "== deploy done =="
+            echo "== done =="
