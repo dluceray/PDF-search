@@ -1,0 +1,176 @@
+import os
+from typing import List, Dict, Any, Optional, Tuple
+import pandas as pd
+from .config import MultiDirConfig
+from .index_schema import CANONICAL_FIELDS, DEFAULT_HEADER_MAP, ALIASES
+from .utils import normalize_date, normalize_amount
+
+class MultiDirAggregator:
+    """
+    Aggregates multiple yearly directories into a unified, normalised in-memory index.
+    - Reads Excel indices from each root with flexible header mapping.
+    - Normalises fields to the canonical schema.
+    - Resolves PDF absolute paths based on file naming rules.
+    - Provides simple fuzzy search over text fields and date granularity support.
+    """
+
+    def __init__(self, cfg: MultiDirConfig):
+        self.cfg = cfg
+        self._records: List[Dict[str, Any]] = []
+        self._loaded = False
+
+    # ------------------------- Public API -------------------------
+
+    def load(self) -> None:
+        """Load and normalise all roots into memory."""
+        self.cfg.validate()
+        records: List[Dict[str, Any]] = []
+        for root in self.cfg.roots:
+            excel_path = self.cfg.resolve_index_path(root)
+            if not excel_path:
+                continue
+            df = self._read_excel(excel_path)
+            mapped = self._map_headers(df, root)
+            normalized = self._normalize_rows(mapped, root)
+            records.extend(normalized)
+        self._records = records
+        self._loaded = True
+
+    def search(self,
+               project_like: Optional[str] = None,
+               unit_like: Optional[str] = None,
+               sign_method: Optional[str] = None,
+               sign_date_like: Optional[str] = None,
+               contract_no_like: Optional[str] = None,
+               contract_amount_like: Optional[str] = None,
+               limit: int = 500) -> List[Dict[str, Any]]:
+        """
+        Perform a fuzzy search. All filters are AND-combined when provided.
+        - project_like, unit_like: case-insensitive substring match
+        - sign_method: exact (after strip)
+        - sign_date_like: prefix match, supports 'YYYY', 'YYYY-MM', 'YYYY-MM-DD'
+        - contract_no_like: substring over contract_no or id
+        - contract_amount_like: substring match over normalised amount text
+        """
+        if not self._loaded:
+            self.load()
+        q = self._records
+
+        def _contains(val: Optional[str], needle: str) -> bool:
+            return bool(val) and (needle.lower() in str(val).lower())
+
+        def _prefix(val: Optional[str], needle: str) -> bool:
+            return bool(val) and str(val).strip().startswith(needle.strip())
+
+        out: List[Dict[str, Any]] = []
+        for row in q:
+            if project_like and not _contains(row.get("project"), project_like):
+                continue
+            if unit_like and not _contains(row.get("unit"), unit_like):
+                continue
+            if sign_method and str(row.get("sign_method", "")).strip() != str(sign_method).strip():
+                continue
+            if sign_date_like and not _prefix(row.get("sign_date"), sign_date_like):
+                continue
+            if contract_no_like:
+                if not (_contains(row.get("contract_no"), contract_no_like) or
+                        _contains(row.get("id"), contract_no_like)):
+                    continue
+            if contract_amount_like and not _contains(row.get("contract_amount"), contract_amount_like):
+                continue
+
+            out.append(row)
+            if len(out) >= (limit or 500):
+                break
+        return out
+
+    def records(self) -> List[Dict[str, Any]]:
+        if not self._loaded:
+            self.load()
+        return self._records
+
+    # ------------------------- Internals -------------------------
+
+    def _read_excel(self, path: str) -> pd.DataFrame:
+        # openpyxl is default-friendly for .xlsx; xlrd for .xls may be missing in env; rely on pandas inference.
+        return pd.read_excel(path, dtype=str, engine=None)
+
+    def _map_headers(self, df: pd.DataFrame, root: str) -> pd.DataFrame:
+        # Build header mapping heuristically, allow per-root overrides.
+        override = self.cfg.schema_hints.get(root, {})
+        mapping: Dict[str, str] = {}
+        for col in df.columns:
+            col_s = str(col).strip()
+            if col_s in override:
+                mapping[col] = override[col_s]
+                continue
+            if col_s in DEFAULT_HEADER_MAP:
+                mapping[col] = DEFAULT_HEADER_MAP[col_s]
+                continue
+            if col_s in ALIASES:
+                mapping[col] = ALIASES[col_s]
+                continue
+            # Fallback: keep original if it matches canonical names
+            if col_s in CANONICAL_FIELDS:
+                mapping[col] = col_s
+            else:
+                # Unknown column: ignore silently
+                pass
+        mapped = df.rename(columns=mapping)
+        # Keep only canonical fields we know how to process
+        keep = [c for c in CANONICAL_FIELDS if c in mapped.columns]
+        return mapped[keep]
+
+    def _normalize_rows(self, df: pd.DataFrame, root: str) -> List[Dict[str, Any]]:
+        out: List[Dict[str, Any]] = []
+        for i, row in df.iterrows():
+            rec = {c: (str(row[c]).strip() if c in row and pd.notna(row[c]) else "") for c in df.columns}
+            rec.setdefault("id", str(i + 1))
+            rec.setdefault("project", "")
+            rec.setdefault("unit", "")
+            rec.setdefault("sign_method", "")
+            rec.setdefault("sign_date", "")
+            rec["sign_date"] = normalize_date(rec.get("sign_date"))
+            rec.setdefault("contract_amount", "")
+            rec["contract_amount"] = normalize_amount(rec.get("contract_amount"))
+            rec.setdefault("contract_no", "")
+            # PDF path resolution (pass id as fallback key)
+            rec["pdf_path"] = self._resolve_pdf_path(root, rec.get("contract_no", ""), rec.get("pdf_path", ""), rec.get("id",""))
+            rec["root"] = root
+            out.append(rec)
+        return out
+
+    def _resolve_pdf_path(self, root: str, contract_no: str, existing: str, rec_id: str = "") -> str:
+        """
+        Resolve the absolute PDF path. Priority:
+        1) If 'existing' is a relative path existing under root, use it.
+        2) Try contract_no-based filename rules.
+        3) Fallback: try rec_id (record id) contained in filename.
+        4) Otherwise return empty string.
+        """
+        if existing:
+            p = existing
+            if not os.path.isabs(p):
+                p = os.path.join(root, p)
+            if os.path.exists(p) and os.path.splitext(p)[1].lower() in self.cfg.allowed_exts:
+                return os.path.abspath(p)
+
+        # Contract number based search
+        if contract_no:
+            for dirpath, _, filenames in os.walk(root):
+                for fn in filenames:
+                    if os.path.splitext(fn)[1].lower() not in self.cfg.allowed_exts:
+                        continue
+                    if contract_no in fn:
+                        return os.path.abspath(os.path.join(dirpath, fn))
+
+        # Fallback to record id in filename
+        if rec_id:
+            for dirpath, _, filenames in os.walk(root):
+                for fn in filenames:
+                    if os.path.splitext(fn)[1].lower() not in self.cfg.allowed_exts:
+                        continue
+                    if rec_id in fn:
+                        return os.path.abspath(os.path.join(dirpath, fn))
+
+        return ""

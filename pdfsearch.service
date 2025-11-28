@@ -1,0 +1,14 @@
+
+[Unit]
+Description=PDF Contract Search System
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/pdfsearch
+ExecStart=/usr/bin/bash start.sh
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,161 @@
+from typing import Optional, Dict, Any, List
+from fastapi import APIRouter, HTTPException, Request, Depends
+from pydantic import BaseModel
+from uuid import uuid4
+import time
+
+from .config import MultiDirConfig
+from .aggregator import MultiDirAggregator
+
+router = APIRouter()
+
+# ======== 懒加载：首次有授权请求时自动加载 ========
+def _autodiscover_roots() -> list[str]:
+    import os
+    roots=set()
+    for dp, dn, fn in os.walk('/data/contracts'):
+        if 'index.xlsx' in fn or '目录.xlsx' in fn:
+            roots.add(dp)
+    return sorted(roots) or ['/data/contracts/2024']
+
+def _ensure_loaded():
+    if _state.get("aggr") is None:
+        cfg = MultiDirConfig(roots=_autodiscover_roots(), schema_hints={"*": {"序号":"contract_no","签订途径":"sign_method"}})
+        aggr = MultiDirAggregator(cfg)
+        aggr.load()
+        _state["cfg"] = cfg
+        _state["aggr"] = aggr
+
+
+# ======== 简单内存态 ========
+_state: Dict[str, Any] = {
+    "cfg": None,    # type: Optional[MultiDirConfig]
+    "aggr": None,   # type: Optional[MultiDirAggregator]
+}
+_AUTH = {
+    "password": "1982567",  # 固定口令
+    "ttl": 900,             # 15分钟（秒）
+    "tokens": {}            # token -> expire_ts
+}
+
+# ======== 鉴权 ========
+def _now() -> int:
+    return int(time.time())
+
+def _issue_token() -> Dict[str, Any]:
+    t = uuid4().hex
+    exp = _now() + int(_AUTH["ttl"])
+    _AUTH["tokens"][t] = exp
+    return {"token": t, "expires_in": _AUTH["ttl"]}
+
+def require_auth(request: Request):
+    tok = request.headers.get("X-Auth") or ""
+    exp = _AUTH["tokens"].get(tok)
+    if not exp or exp <= _now():
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    _ensure_loaded()
+    # 可选：滑动续期（如需每次访问延长15分钟，取消下一行注释）
+    # _AUTH["tokens"][tok] = _now() + int(_AUTH["ttl"])
+
+# ======== 模型 ========
+class ConfigPayload(BaseModel):
+    roots: List[str]
+    excel_patterns: Optional[List[str]] = None
+    allowed_exts: Optional[List[str]] = None
+    schema_hints: Optional[Dict[str, Dict[str, str]]] = None
+
+class LoginPayload(BaseModel):
+    password: str
+
+class SearchPayload(BaseModel):
+    project_like: Optional[str] = None
+    unit_like: Optional[str] = None
+    sign_method: Optional[str] = None
+    sign_date_like: Optional[str] = None  # 'YYYY' / 'YYYY-MM' / 'YYYY-MM-DD'
+    contract_no_like: Optional[str] = None
+    contract_amount_like: Optional[str] = None
+    offset: int = 0
+    skip: Optional[int] = None
+    limit: int = 200
+
+# ======== 登录 ========
+@router.post("/login")
+def login(payload: LoginPayload) -> Dict[str, Any]:
+    if payload.password != _AUTH["password"]:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    return _issue_token()
+
+# ======== 配置/加载 ========
+@router.get("/config", response_model=ConfigPayload, dependencies=[Depends(require_auth)])
+def get_config() -> Any:
+    if _state["cfg"] is None:
+        raise HTTPException(status_code=404, detail="Multi-directory config not initialised.")
+    cfg = _state["cfg"]
+    return ConfigPayload(
+        roots=cfg.roots,
+        excel_patterns=cfg.excel_patterns,
+        allowed_exts=cfg.allowed_exts,
+        schema_hints=cfg.schema_hints or {},
+    )
+
+@router.post("/reload", dependencies=[Depends(require_auth)])
+def reload_config(payload: ConfigPayload) -> Dict[str, Any]:
+    cfg = MultiDirConfig(
+        roots=payload.roots,
+        excel_patterns=payload.excel_patterns or MultiDirConfig([]).excel_patterns,
+        allowed_exts=payload.allowed_exts or MultiDirConfig([]).allowed_exts,
+        schema_hints=payload.schema_hints or {},
+    )
+    aggr = MultiDirAggregator(cfg)
+    aggr.load()
+    _state["cfg"] = cfg
+    _state["aggr"] = aggr
+    return {"ok": True, "records_loaded": len(aggr.records()), "roots": cfg.roots}
+
+# ======== 搜索（旧接口，便于兼容） ========
+@router.post("/search", dependencies=[Depends(require_auth)])
+def search(payload: SearchPayload) -> Dict[str, Any]:
+    if _state["aggr"] is None:
+        raise HTTPException(status_code=400, detail="Not loaded. Call /api/mdirs/reload first.")
+    items = _state["aggr"].search(
+        project_like=payload.project_like,
+        unit_like=payload.unit_like,
+        sign_method=payload.sign_method,
+        sign_date_like=payload.sign_date_like,
+        contract_no_like=payload.contract_no_like,
+        limit=payload.limit,
+    )
+    # 金额过滤（如果传入）
+    if payload.contract_amount_like:
+        key = str(payload.contract_amount_like).strip()
+        items = [x for x in items if key in str(x.get("contract_amount", ""))]
+    return {"count": len(items), "items": items}
+
+# ======== 分页搜索（前端用） ========
+@router.post("/paged_search", dependencies=[Depends(require_auth)])
+async def paged_search(payload: SearchPayload, request: Request) -> Dict[str, Any]:
+    if _state["aggr"] is None:
+        raise HTTPException(status_code=400, detail="Not loaded. Call /api/mdirs/reload first.")
+    # 先取全量，再在本层做额外过滤与切片
+    all_items = _state["aggr"].search(
+        project_like=payload.project_like,
+        unit_like=payload.unit_like,
+        sign_method=payload.sign_method,
+        sign_date_like=payload.sign_date_like,
+        contract_no_like=payload.contract_no_like,
+        limit=10_000_000,
+    )
+    # 金额过滤（支持 body 中或 pydantic 中传入）
+    try:
+        req = await request.json()
+    except Exception:
+        req = {}
+    amt = (req.get("contract_amount_like") or payload.contract_amount_like or "").strip()
+    if amt:
+        all_items = [x for x in all_items if amt in str(x.get("contract_amount", ""))]
+
+    start = payload.skip if payload.skip is not None else (payload.offset or 0)
+    if start < 0: start = 0
+    end = start + (payload.limit or 200)
+    page = all_items[start:end]
+    return {"count": len(all_items), "items": page}

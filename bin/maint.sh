@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+VENV="/root/pdfsearch/venv"
+API="http://127.0.0.1:9000"
+PASS="1982567"
+
+# 收集 /data/contracts/* 作为 roots（为空则兜底两个常见年）
+mapfile -t R < <(find /data/contracts -mindepth 1 -maxdepth 1 -type d -printf '%p\n' 2>/dev/null || true)
+if [ "${#R[@]}" -eq 0 ]; then R=(/data/contracts/2024 /data/contracts/2025); fi
+JSON_ROOTS=$(printf '"%s",' "${R[@]}"); JSON_ROOTS="[${JSON_ROOTS%,}]"
+
+# venv & 追加依赖（静默、失败不致命）
+source "$VENV/bin/activate" || true
+pip -q install PyPDF2 >/dev/null 2>&1 || true
+
+# 登录
+RAW=$(curl -s -X POST "$API/api/mdirs/login" -H 'Content-Type: application/json' -d '{"password":"'"$PASS"'"}' || true)
+TOK=$(printf %s "$RAW" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
+if [ -n "$TOK" ]; then
+  # reload roots
+  curl -s -X POST "$API/api/mdirs/reload" \
+    -H "Content-Type: application/json" -H "X-Auth: $TOK" \
+    -d '{"roots':"$JSON_ROOTS"',"excel_patterns":["INDEX.XLSX"],"allowed_exts":[".pdf"]}' >/dev/null || true
+fi
+
+# to*.pdf 追加
+if [ -x /root/pdfsearch/bin/update_all.sh ]; then
+  /root/pdfsearch/bin/update_all.sh >/dev/null 2>&1 || true
+fi
+echo "maint.sh done at $(date '+%F %T')"

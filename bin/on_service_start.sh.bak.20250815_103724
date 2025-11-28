@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+set -euo pipefail
+LOG=/var/log/pdfsearch-start.log
+{
+  echo "==== $(date) on_service_start ===="
+  # 等后端就绪（最多 30 秒）
+  for i in {1..30}; do
+    if curl -sf http://127.0.0.1:9000/api/health >/dev/null; then
+      echo "health OK at try $i"; break
+    fi; sleep 1
+  done
+  # 先做 PDF 追加
+  /root/pdfsearch/bin/append_pdfs.py || true
+  # 登录拿 Token
+  TOK=$(/root/pdfsearch/bin/login_token.sh)
+  # 自动发现所有含 index.xlsx/目录.xlsx 的目录并重载
+  python3 - <<'PY' | curl -s -X POST "http://127.0.0.1:9000/api/mdirs/reload" \
+    -H "Content-Type: application/json" -H "X-Auth: '"$TOK"'" -d @- >/dev/null || true
+import os, json
+roots=set()
+for dp, dn, fn in os.walk('/data/contracts'):
+    if 'index.xlsx' in fn or '目录.xlsx' in fn:
+        roots.add(dp)
+schema={r:{"序号":"contract_no","签订途径":"sign_method"} for r in roots}
+print(json.dumps({
+  "roots": sorted(roots) or ["/data/contracts/2024"],
+  "excel_patterns": ["index.xlsx","目录.xlsx"],
+  "allowed_exts": [".pdf"],
+  "schema_hints": schema
+}, ensure_ascii=False))
+PY
+  echo "done."
+} >> "$LOG" 2>&1

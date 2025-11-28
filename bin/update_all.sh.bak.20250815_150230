@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+LOCK="/var/run/update-all.lock"
+PDF="/root/pdfsearch/bin/append_pdfs.py"
+XLS="/root/pdfsearch/bin/ingest_excels.py"
+cleanup(){ rm -f "$LOCK" || true; }
+trap cleanup EXIT
+if [ -e "$LOCK" ]; then
+  echo '{"ok":false,"error":"another update running"}'; exit 1
+fi
+touch "$LOCK"
+# 1) 先合并 to*.pdf（延续原行为）
+if [ -f "$PDF" ]; then if [ -x "$PDF" ]; then "$PDF" || true; else python3 "$PDF" || true; fi; fi
+# 2) 再入库 Excel（第二行是真表头）
+python3 "$XLS" --header-row 2 || true
+echo '{"ok":true,"msg":"pdf merged then xlsx ingested"}'
