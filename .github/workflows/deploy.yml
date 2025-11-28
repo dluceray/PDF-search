@@ -18,10 +18,8 @@ jobs:
           host: 45.93.30.190
           username: root
           port: 22
-
-          # ★★★ 这里用你的私钥 secret 名字 ★★★
-          key: ${{ secrets.DEPLOY_KEY }}
-
+          # 这里用刚才创建的 Secret
+          key: ${{ secrets.KOREA_SSH_KEY }}
           script: |
             set -e
             echo "== [1] go to project dir =="
