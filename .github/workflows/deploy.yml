@@ -1,0 +1,37 @@
+name: Deploy to Korea Server
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: 45.93.30.190
+          username: root
+          port: 22
+          key: ${{ secrets.SSH_KEY_PDFSEARCH }}
+          script: |
+            set -e
+            cd /root/pdfsearch
+            git pull
+
+            # 更新后端依赖（如有变动）
+            source venv/bin/activate
+            pip install --no-cache-dir -r requirements.txt
+            deactivate
+
+            # 用仓库里的真实前端覆盖 nginx 目录
+            mkdir -p /var/www/gfwzb.com
+            rsync -av --delete /root/pdfsearch/site_frontend/ /var/www/gfwzb.com/
+
+            # 重启后端服务
+            systemctl restart pdfsearch
