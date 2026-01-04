@@ -17,9 +17,6 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    env:
-      DEPLOY_REF: ${{ github.event.inputs.ref || 'korea' }}
-
     steps:
       - name: Deploy to Korea via SSH
         uses: appleboy/ssh-action@v1.2.0
@@ -29,21 +26,25 @@ jobs:
           port: 22
           key: ${{ secrets.KOREA_SSH_KEY }}
           script: |
-            set -euo pipefail
-            echo "== Deploy ref: ${DEPLOY_REF} =="
+            set -e
 
+            # 重要：REF 在这里“直接用 GitHub 表达式”写死进脚本，避免依赖远端环境变量
+            REF="${{ github.event.inputs.ref || 'korea' }}"
+
+            echo "== Deploy ref: $REF =="
             cd /root/pdfsearch
+
             git fetch --all --tags
 
-            # 如果是分支（origin/xxx 存在）就 reset 到远端分支；否则按 tag/SHA 直接 checkout
-            if git show-ref --verify --quiet "refs/remotes/origin/${DEPLOY_REF}"; then
-              git checkout -f "${DEPLOY_REF}"
-              git reset --hard "origin/${DEPLOY_REF}"
+            # 分支：对齐到 origin/分支；tag/SHA：直接 checkout
+            if git show-ref --verify --quiet "refs/remotes/origin/$REF"; then
+              git checkout -f "$REF"
+              git reset --hard "origin/$REF"
             else
-              git checkout -f "${DEPLOY_REF}"
+              git checkout -f "$REF"
             fi
 
-            # 同步前端到 Nginx 站点目录（确保主页可更新）
+            # 同步前端到 Nginx 站点目录（主页更新靠这一步）
             command -v rsync >/dev/null 2>&1 || (apt-get update -y && apt-get install -y rsync)
             mkdir -p /var/www/gfwzb.com
             rsync -a --delete /root/pdfsearch/site_frontend/ /var/www/gfwzb.com/
