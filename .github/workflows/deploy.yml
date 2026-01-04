@@ -32,6 +32,10 @@ jobs:
             echo "== Deploy ref: $REF =="
             git fetch --all --tags
             git checkout -f "$REF"
+            mkdir -p /var/www/gfwzb.com
+command -v rsync >/dev/null 2>&1 || (apt-get update && apt-get install -y rsync)
+rsync -a --delete /root/pdfsearch/site_frontend/ /var/www/gfwzb.com/
+chmod -R 755 /var/www/gfwzb.com
             git reset --hard "origin/$REF" 2>/dev/null || true
 
             source venv/bin/activate
