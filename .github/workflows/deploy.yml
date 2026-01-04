@@ -2,39 +2,42 @@ name: Deploy to Korea Server
 
 on:
   push:
-    branches: [ main ]
+    branches: [ korea ]
   workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch/Tag/SHA to deploy (default: korea)"
+        required: false
+        default: "korea"
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
       - name: Deploy to Korea via SSH
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: 45.93.30.190
           username: root
           port: 22
-          # 这里用刚才创建的 Secret
           key: ${{ secrets.KOREA_SSH_KEY }}
           script: |
             set -e
-            echo "== [1] go to project dir =="
             cd /root/pdfsearch
 
-            echo "== [2] git pull =="
-            git pull
+            # 决定部署哪个 ref：手动触发就用 inputs.ref；自动触发就用当前分支 korea
+            REF="${{ github.event.inputs.ref }}"
+            if [ -z "$REF" ]; then REF="korea"; fi
 
-            echo "== [3] update dependencies =="
+            echo "== Deploy ref: $REF =="
+            git fetch --all --tags
+            git checkout -f "$REF"
+            git reset --hard "origin/$REF" 2>/dev/null || true
+
             source venv/bin/activate
             pip install --no-cache-dir -r requirements.txt
             deactivate
 
-            echo "== [4] restart service =="
             systemctl restart pdfsearch
-
+            systemctl restart nginx || true
             echo "== done =="
