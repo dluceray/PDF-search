@@ -1,6 +1,8 @@
 name: Deploy to Korea Server
 
 on:
+  push:
+    branches: [ korea ]
   workflow_dispatch:
     inputs:
       ref:
@@ -24,38 +26,31 @@ jobs:
           port: 22
           key: ${{ secrets.KOREA_SSH_KEY }}
           script: |
-            set -euo pipefail
+            set -e
 
-            REF="${{ inputs.ref }}"
-            echo "== Deploy ref: ${REF} =="
+            # 重要：REF 在这里“直接用 GitHub 表达式”写死进脚本，避免依赖远端环境变量
+            REF="${{ github.event.inputs.ref || 'korea' }}"
 
+            echo "== Deploy ref: $REF =="
             cd /root/pdfsearch
 
-            # 拉取最新分支与标签
-            git fetch --all --tags --prune
+            git fetch --all --tags
 
-            # 分支：强制把本地分支对齐到 origin/分支；tag/SHA：直接 checkout
-            if git show-ref --verify --quiet "refs/remotes/origin/${REF}"; then
-              git checkout -B "${REF}" "origin/${REF}"
+            # 分支：对齐到 origin/分支；tag/SHA：直接 checkout
+            if git show-ref --verify --quiet "refs/remotes/origin/$REF"; then
+              git checkout -f "$REF"
+              git reset --hard "origin/$REF"
             else
-              git checkout -f "${REF}"
+              git checkout -f "$REF"
             fi
 
             # 同步前端到 Nginx 站点目录（主页更新靠这一步）
-            if ! command -v rsync >/dev/null 2>&1; then
-              apt-get update -y
-              apt-get install -y rsync
-            fi
-
+            command -v rsync >/dev/null 2>&1 || (apt-get update -y && apt-get install -y rsync)
             mkdir -p /var/www/gfwzb.com
             rsync -a --delete /root/pdfsearch/site_frontend/ /var/www/gfwzb.com/
             chmod -R 755 /var/www/gfwzb.com
 
             # 后端依赖与重启
-            if [ ! -d "venv" ]; then
-              python3 -m venv venv
-            fi
-
             source venv/bin/activate
             pip install --no-cache-dir -r requirements.txt
             deactivate
