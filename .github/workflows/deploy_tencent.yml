@@ -1,0 +1,58 @@
+name: Deploy to Tencent Server (Manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch/Tag/SHA to deploy (default: Tencent)"
+        required: false
+        default: "Tencent"
+
+concurrency:
+  group: deploy-tencent
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to Tencent via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: <YOUR_TENCENT_IP>
+          username: root
+          port: 22
+          key: ${{ secrets.TENCENT_SSH_KEY }}
+          script: |
+            set -e
+
+            REF="${{ github.event.inputs.ref || 'Tencent' }}"
+
+            echo "== Deploy ref: $REF =="
+            cd /root/pdfsearch
+
+            # 拉取远端更新
+            git fetch --all --tags --prune
+
+            # 分支：对齐 origin/分支；tag/SHA：直接 checkout
+            if git show-ref --verify --quiet "refs/remotes/origin/$REF"; then
+              git checkout -f "$REF"
+              git reset --hard "origin/$REF"
+            else
+              git checkout -f "$REF"
+            fi
+
+            # 依赖更新（如无变化也安全）
+            source venv/bin/activate
+            pip install --no-cache-dir -r requirements.txt
+            deactivate
+
+            # 重启服务
+            systemctl restart pdfsearch
+            systemctl status pdfsearch --no-pager -l | sed -n "1,40p"
+
+            echo "== done =="
+
+
+            systemctl restart pdfsearch
+            echo "== done =="
