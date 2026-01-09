@@ -17,17 +17,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Deploy to Tencent via SSH
-        uses: appleboy/ssh-action@v1.2.0
-        with:
-          host: ${{ secrets.TENCENT_HOST }}
-          username: root
-          port: 22
-          key: ${{ secrets.TENCENT_SSH_KEY }}
-          debug: true
-          script_stop: true
-          script: |
-            set -Eeuo pipefail
-            trap 'echo "[ERROR] line=$LINENO cmd=$BASH_COMMAND" >&2' ERR
+  uses: appleboy/ssh-action@v1.2.0
+  with:
+    host: ${{ secrets.TENCENT_HOST }}
+    username: root
+    port: 22
+    key: ${{ secrets.TENCENT_SSH_KEY }}
+    script: |
+      set -e
+      echo "SSH OK"
+
 
             # 关键：把 ref 固化在脚本里（不依赖远端环境变量）
             REF="${{ github.event.inputs.ref || 'Tencent' }}"
