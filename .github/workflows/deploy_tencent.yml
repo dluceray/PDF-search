@@ -4,8 +4,8 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: "Branch/Tag/SHA to deploy"
-        required: false
+        description: "Branch/Tag/SHA to deploy (e.g. Tencent)"
+        required: true
         default: "Tencent"
 
 concurrency:
@@ -15,16 +15,24 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.inputs.ref }}
+          fetch-depth: 1
 
-      - name: Build deploy package (exclude .git and venv)
+      - name: Build deploy package (in workspace)
         run: |
           set -euo pipefail
-          tar --exclude=.git --exclude=venv -czf /tmp/pdfsearch.tgz .
+          echo "== workspace =="
+          pwd
+          ls -la
+
+          echo "== build package =="
+          tar --exclude=.git --exclude=venv -czf pdfsearch.tgz .
+          ls -la pdfsearch.tgz
 
       - name: Upload package to Tencent
         uses: appleboy/scp-action@v0.1.7
@@ -33,8 +41,9 @@ jobs:
           username: ${{ vars.TENCENT_USER }}
           port: ${{ vars.TENCENT_PORT }}
           key: ${{ secrets.TENCENT_SSH_KEY }}
-          source: "/tmp/pdfsearch.tgz"
+          source: "pdfsearch.tgz"
           target: "/tmp"
+          overwrite: true
 
       - name: Deploy on Tencent (extract + restart)
         uses: appleboy/ssh-action@v1.2.0
@@ -47,8 +56,30 @@ jobs:
           command_timeout: 30m
           script: |
             set -euo pipefail
+
+            echo "== whoami / host =="
+            whoami
+            hostname
+            date
+
+            echo "== sanity: package exists? =="
+            ls -la /tmp/pdfsearch.tgz
+
+            echo "== deploy to /root/pdfsearch =="
             cd /root/pdfsearch
+
+            # 可选：备份当前代码（只备份一份当天的目录，不会太大）
+            TS="$(date +%Y%m%d_%H%M%S)"
+            mkdir -p /root/pdfsearch_backups
+            tar --exclude=venv --exclude=.git -czf "/root/pdfsearch_backups/pdfsearch_${TS}.tgz" . || true
+
+            # 解压覆盖（不动 venv，不动 systemd）
             tar -xzf /tmp/pdfsearch.tgz -C /root/pdfsearch
+
+            echo "== restart service =="
             systemctl restart pdfsearch
+            sleep 1
+            systemctl --no-pager -l status pdfsearch | sed -n '1,80p'
+
             systemctl is-active --quiet pdfsearch
             echo "DEPLOY_OK"
