@@ -23,16 +23,25 @@ jobs:
           ref: ${{ github.event.inputs.ref }}
           fetch-depth: 1
 
-      - name: Build deploy package (in workspace)
+      - name: Build deploy package (stable tar)
         run: |
           set -euo pipefail
           echo "== workspace =="
           pwd
           ls -la
 
-          echo "== build package =="
-          tar --exclude=.git --exclude=venv -czf pdfsearch.tgz .
-          ls -la pdfsearch.tgz
+          echo "== build package to /tmp (avoid self-including) =="
+          rm -f /tmp/pdfsearch.tgz ./pdfsearch.tgz || true
+
+          tar -czf /tmp/pdfsearch.tgz \
+            --exclude=.git \
+            --exclude=venv \
+            --exclude=pdfsearch.tgz \
+            .
+
+          ls -la /tmp/pdfsearch.tgz
+          cp -f /tmp/pdfsearch.tgz ./pdfsearch.tgz
+          ls -la ./pdfsearch.tgz
 
       - name: Upload package to Tencent
         uses: appleboy/scp-action@v0.1.7
@@ -68,12 +77,10 @@ jobs:
             echo "== deploy to /root/pdfsearch =="
             cd /root/pdfsearch
 
-            # 可选：备份当前代码（只备份一份当天的目录，不会太大）
             TS="$(date +%Y%m%d_%H%M%S)"
             mkdir -p /root/pdfsearch_backups
             tar --exclude=venv --exclude=.git -czf "/root/pdfsearch_backups/pdfsearch_${TS}.tgz" . || true
 
-            # 解压覆盖（不动 venv，不动 systemd）
             tar -xzf /tmp/pdfsearch.tgz -C /root/pdfsearch
 
             echo "== restart service =="
