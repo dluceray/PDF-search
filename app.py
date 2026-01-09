@@ -37,8 +37,21 @@ CONFIG: Dict = {
 
 RETURN_FIELDS = ["序号","工程地点及内容","单位名称","签订日期","合同额","合同编号","pdf_path","pdf_dl"]
 
-PASSWORD = "1982567"
+PASSWORD_FALLBACK = "1982567"
+PASSWORDS_FILE = os.path.join(os.path.dirname(__file__), "DATA", "passwords.txt")
 TOKENS: Dict[str, float] = {}
+
+def _load_passwords() -> set[str]:
+    try:
+        with open(PASSWORDS_FILE, "r", encoding="utf-8") as f:
+            raw = f.read()
+    except FileNotFoundError:
+        return {PASSWORD_FALLBACK}
+    passwords = {p.strip() for p in raw.split(",") if p.strip()}
+    return passwords or {PASSWORD_FALLBACK}
+
+def _password_valid(password: str) -> bool:
+    return str(password) in _load_passwords()
 
 # 轻量 rows 缓存（按 Excel 列表+mtime 签名）
 _ROWS_CACHE = {"sig": None, "rows": []}
@@ -288,7 +301,8 @@ def health(): return {"ok": True, "ts": int(_utc_now_ts())}
 
 @app.post("/api/mdirs/login")
 def login(data: dict):
-    if not data or str(data.get("password","") or data.get("pwd","")) != PASSWORD: raise HTTPException(401, "Bad password")
+    if not data or not _password_valid(data.get("password", "") or data.get("pwd", "")):
+        raise HTTPException(401, "Bad password")
     return {"token": _issue_token(24), "expires_in_hours": 24}
 
 @app.post("/api/mdirs/reload", dependencies=[Depends(require_auth)])
@@ -564,7 +578,7 @@ def entries_count():
 
 @app.post("/do_login")
 def do_login(password: str = Form(...)):
-    if str(password) != PASSWORD:
+    if not _password_valid(password):
         raise HTTPException(401, "Bad password")
     t = _issue_token(24)
     resp = RedirectResponse(url="/", status_code=302)
