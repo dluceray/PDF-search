@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: "Branch/Tag/SHA to deploy (default: Tencent)"
+        description: "Branch/Tag/SHA to deploy"
         required: false
         default: "Tencent"
 
@@ -16,7 +16,27 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Deploy to Tencent via SSH
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref }}
+
+      - name: Build deploy package (exclude .git and venv)
+        run: |
+          set -euo pipefail
+          tar --exclude=.git --exclude=venv -czf /tmp/pdfsearch.tgz .
+
+      - name: Upload package to Tencent
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ vars.TENCENT_HOST }}
+          username: ${{ vars.TENCENT_USER }}
+          port: ${{ vars.TENCENT_PORT }}
+          key: ${{ secrets.TENCENT_SSH_KEY }}
+          source: "/tmp/pdfsearch.tgz"
+          target: "/tmp"
+
+      - name: Deploy on Tencent (extract + restart)
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ vars.TENCENT_HOST }}
@@ -27,24 +47,8 @@ jobs:
           command_timeout: 30m
           script: |
             set -euo pipefail
-
-            REF="${{ github.event.inputs.ref }}"
-            echo "== Deploy ref: ${REF} =="
-
             cd /root/pdfsearch
-
-            echo "== remotes =="; git remote -v
-            echo "== fetch =="; git fetch --prune origin
-
-            echo "== checkout/reset to origin/${REF} =="
-            git checkout -B "${REF}" "origin/${REF}"
-            git reset --hard "origin/${REF}"
-
-            echo "== optional deps =="
-            if [ -f requirements.txt ]; then
-              /root/pdfsearch/venv/bin/pip install -r requirements.txt
-            fi
-
-            echo "== restart service =="
+            tar -xzf /tmp/pdfsearch.tgz -C /root/pdfsearch
             systemctl restart pdfsearch
-            systemctl status pdfsearch --no-pager -l | sed -n '1,80p'
+            systemctl is-active --quiet pdfsearch
+            echo "DEPLOY_OK"
