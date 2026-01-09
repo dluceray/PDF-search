@@ -17,45 +17,34 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Deploy to Tencent via SSH
-  uses: appleboy/ssh-action@v1.2.0
-  with:
-    host: ${{ secrets.TENCENT_HOST }}
-    username: root
-    port: 22
-    key: ${{ secrets.TENCENT_SSH_KEY }}
-    script: |
-      set -e
-      echo "SSH OK"
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ vars.TENCENT_HOST }}
+          username: ${{ vars.TENCENT_USER }}
+          port: ${{ vars.TENCENT_PORT }}
+          key: ${{ secrets.TENCENT_SSH_KEY }}
+          script_stop: true
+          command_timeout: 30m
+          script: |
+            set -euo pipefail
 
-
-            # 关键：把 ref 固化在脚本里（不依赖远端环境变量）
-            REF="${{ github.event.inputs.ref || 'Tencent' }}"
-            echo "== Deploy ref: $REF =="
-
-            echo "== server =="; hostname; whoami; pwd; date
-            echo "== check repo dir =="
-            test -d /root/pdfsearch || (echo "[FATAL] /root/pdfsearch not found" && exit 2)
+            REF="${{ github.event.inputs.ref }}"
+            echo "== Deploy ref: ${REF} =="
 
             cd /root/pdfsearch
-            echo "== current branch/commit =="; git branch --show-current || true; git log -1 --oneline || true
-            echo "== remotes =="; git remote -v || true
 
-            echo "== fetch =="
-            git fetch --all --tags
+            echo "== remotes =="; git remote -v
+            echo "== fetch =="; git fetch --prune origin
 
-            echo "== checkout =="
-            if git show-ref --verify --quiet "refs/remotes/origin/$REF"; then
-              git checkout -f "$REF"
-              git reset --hard "origin/$REF"
-            else
-              git checkout -f "$REF"
+            echo "== checkout/reset to origin/${REF} =="
+            git checkout -B "${REF}" "origin/${REF}"
+            git reset --hard "origin/${REF}"
+
+            echo "== optional deps =="
+            if [ -f requirements.txt ]; then
+              /root/pdfsearch/venv/bin/pip install -r requirements.txt
             fi
-
-            echo "== after checkout =="; git log -1 --oneline
-            echo "== ls =="; ls -la | sed -n '1,120p'
 
             echo "== restart service =="
             systemctl restart pdfsearch
             systemctl status pdfsearch --no-pager -l | sed -n '1,80p'
-
-            echo "== done =="
