@@ -19,22 +19,32 @@ jobs:
       - name: Deploy to Tencent via SSH
         uses: appleboy/ssh-action@v1.2.0
         with:
-          host: <YOUR_TENCENT_IP>
+          host: ${{ secrets.TENCENT_HOST }}
           username: root
           port: 22
           key: ${{ secrets.TENCENT_SSH_KEY }}
+          debug: true
+          script_stop: true
           script: |
-            set -e
+            set -Eeuo pipefail
+            trap 'echo "[ERROR] line=$LINENO cmd=$BASH_COMMAND" >&2' ERR
 
+            # 关键：把 ref 固化在脚本里（不依赖远端环境变量）
             REF="${{ github.event.inputs.ref || 'Tencent' }}"
-
             echo "== Deploy ref: $REF =="
+
+            echo "== server =="; hostname; whoami; pwd; date
+            echo "== check repo dir =="
+            test -d /root/pdfsearch || (echo "[FATAL] /root/pdfsearch not found" && exit 2)
+
             cd /root/pdfsearch
+            echo "== current branch/commit =="; git branch --show-current || true; git log -1 --oneline || true
+            echo "== remotes =="; git remote -v || true
 
-            # 拉取远端更新
-            git fetch --all --tags --prune
+            echo "== fetch =="
+            git fetch --all --tags
 
-            # 分支：对齐 origin/分支；tag/SHA：直接 checkout
+            echo "== checkout =="
             if git show-ref --verify --quiet "refs/remotes/origin/$REF"; then
               git checkout -f "$REF"
               git reset --hard "origin/$REF"
@@ -42,17 +52,11 @@ jobs:
               git checkout -f "$REF"
             fi
 
-            # 依赖更新（如无变化也安全）
-            source venv/bin/activate
-            pip install --no-cache-dir -r requirements.txt
-            deactivate
+            echo "== after checkout =="; git log -1 --oneline
+            echo "== ls =="; ls -la | sed -n '1,120p'
 
-            # 重启服务
+            echo "== restart service =="
             systemctl restart pdfsearch
-            systemctl status pdfsearch --no-pager -l | sed -n "1,40p"
+            systemctl status pdfsearch --no-pager -l | sed -n '1,80p'
 
-            echo "== done =="
-
-
-            systemctl restart pdfsearch
             echo "== done =="
