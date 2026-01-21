@@ -69,6 +69,33 @@ def find_index_file(year_dir: Path) -> Optional[Path]:
             return p
     return None
 
+def find_template_index(root: Path, target_year: int) -> Optional[Path]:
+    years = sorted(
+        [p for p in root.iterdir() if p.is_dir() and p.name.isdigit()],
+        key=lambda p: int(p.name),
+        reverse=True
+    )
+    for y in years:
+        if int(y.name) == target_year:
+            continue
+        idx = find_index_file(y)
+        if idx:
+            return idx
+    return None
+
+def ensure_year_index(root: Path, year: int) -> Optional[Path]:
+    year_dir = root / str(year)
+    idx_path = find_index_file(year_dir)
+    if idx_path:
+        return idx_path
+    tmpl = find_template_index(root, year)
+    if not tmpl:
+        return None
+    year_dir.mkdir(parents=True, exist_ok=True)
+    idx_path = year_dir / "index.xlsx"
+    shutil.copy2(tmpl, idx_path)
+    return idx_path
+
 def load_year_ids_and_check_header(idx_path: Path):
     ids=set()
     if not idx_path or not idx_path.is_file(): return False, ids, "缺少index.xlsx", []
@@ -118,7 +145,7 @@ def backup_and_append(idx_path: Path, rows, header_positions):
     r_ptr = 2
     maxr = ws.max_row  # 含已画表格的空行
     for rec in rows:
-        # 先占用 A 列为空的空槽
+        # 先占用 “序号” 列为空的空槽
         while r_ptr <= maxr and (not a_col_empty(r_ptr) or _row_has_merged(r_ptr)):
             r_ptr += 1
         if r_ptr <= maxr:
@@ -227,7 +254,7 @@ def process_file(xlsx: Path, root: Path, header_mode: str, year_cache: Dict[int,
         idx_path = None
         cache = year_cache.get(year)
         if cache is None:
-            idx_path = find_index_file(year_dir)
+            idx_path = ensure_year_index(root, year)
             ok_idx, existing, why2, header_positions = load_year_ids_and_check_header(idx_path)
             if not ok_idx:
                 res["invalid"] += 1; res["details"].append({"seq":seq,"year":year,"status":"invalid","reason":why2}); continue
