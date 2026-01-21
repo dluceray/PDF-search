@@ -57,12 +57,12 @@ td.cell-clamp{
   -webkit-line-clamp:3;
   overflow:hidden;
 }
-th.col-index,td.col-index{width:70px;text-align:center}
-th.col-date,td.col-date{width:110px;text-align:center}
-th.col-num,td.col-num{width:100px;text-align:right;font-variant-numeric:tabular-nums}
-th.col-pdf,td.col-pdf{width:110px;text-align:center}
-th.col-loc,td.col-loc{width:170px}
-th.col-unit,td.col-unit{width:160px}
+col.col-index,th.col-index,td.col-index{width:70px;text-align:center}
+col.col-date,th.col-date,td.col-date{width:110px;text-align:center}
+col.col-num,th.col-num,td.col-num{width:100px;text-align:right;font-variant-numeric:tabular-nums}
+col.col-pdf,th.col-pdf,td.col-pdf{width:110px;text-align:center}
+col.col-loc,th.col-loc,td.col-loc{width:170px}
+col.col-unit,th.col-unit,td.col-unit{width:160px}
 tbody tr.row-paid-ok{background:#f2faf3}
 tbody tr.row-paid-ok:hover{background:#eaf6ee}
 a.link{color:var(--accent);text-decoration:none}a.link:hover{text-decoration:underline}
@@ -218,15 +218,15 @@ small.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospa
         </colgroup>
         <thead>
           <tr>
-            <th style="width:80px">序号</th>
-            <th>工程地点及内容</th>
-            <th>单位名称</th>
-            <th style="width:120px">签订日期</th>
-            <th style="width:110px">合同额</th>
-            <th style="width:90px">结算值</th>
-            <th style="width:90px">已付款</th>
-            <th style="width:90px">欠付款</th>
-            <th style="width:80px">PDF</th>
+            <th class="col-index">序号</th>
+            <th class="col-loc">工程地点及内容</th>
+            <th class="col-unit">单位名称</th>
+            <th class="col-date">签订日期</th>
+            <th class="col-num">合同额</th>
+            <th class="col-num">结算值</th>
+            <th class="col-num">已付款</th>
+            <th class="col-num">欠付款</th>
+            <th class="col-pdf">PDF</th>
           </tr>
         </thead>
         <tbody id="tbody"></tbody>
@@ -347,15 +347,15 @@ busy(true);
      </div>`
   : `<span class="sub">无</span>`;
       tr.innerHTML=`
-        <td>${x["序号"]||""}</td>
-        <td class="clip" title="${(x["工程地点及内容"]||"").replace(/"/g,'&quot;')}">${x["工程地点及内容"]||""}</td>
-        <td class="clip" title="${(x["单位名称"]||"").replace(/"/g,'&quot;')}">${x["单位名称"]||""}</td>
-        <td>${x["签订日期"]||""}</td>
-        <td>${x["合同额"]||""}</td>
-        <td>${x["结算值"]||""}</td>
-        <td>${x["已付款"]||""}</td>
-        <td>${x["欠付款"]||""}</td>
-        <td>${link}</td>`;
+        <td class="col-index">${x["序号"]||""}</td>
+        <td class="clip col-loc" title="${(x["工程地点及内容"]||"").replace(/"/g,'&quot;')}">${x["工程地点及内容"]||""}</td>
+        <td class="clip col-unit" title="${(x["单位名称"]||"").replace(/"/g,'&quot;')}">${x["单位名称"]||""}</td>
+        <td class="col-date">${x["签订日期"]||""}</td>
+        <td class="col-num">${x["合同额"]||""}</td>
+        <td class="col-num">${x["结算值"]||""}</td>
+        <td class="col-num">${x["已付款"]||""}</td>
+        <td class="col-num">${x["欠付款"]||""}</td>
+        <td class="col-pdf">${link}</td>`;
       tb.appendChild(tr);
     });
   }catch(e){ toast("请求失败"); }
