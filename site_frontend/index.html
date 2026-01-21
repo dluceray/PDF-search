@@ -35,11 +35,27 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(0,122,255,.12);
 .kv{display:flex;align-items:center;gap:10px}
 .dot{width:8px;height:8px;border-radius:50%;background:#9aa0a6}.dot.ok{background:var(--ok)}
 .tableWrap{margin-top:16px;border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;background:#fff;box-shadow:var(--shadow)}
-table{width:100%;border-collapse:collapse}
+table{width:100%;border-collapse:collapse;table-layout:fixed}
 thead th{position:sticky;top:0;background:#fafafa;border-bottom:1px solid var(--line);font-weight:600;font-size:12px;color:#3c3c43;opacity:.9}
 th,td{padding:10px 12px;border-bottom:1px solid #f0f0f0;vertical-align:top}
+td{font-size:13px}
 tbody tr:hover{background:#fafcff}
 td.clip{max-width:280px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+td.cell-wrap{white-space:normal;word-break:break-word}
+td.cell-clamp{
+  display:-webkit-box;
+  -webkit-box-orient:vertical;
+  -webkit-line-clamp:3;
+  overflow:hidden;
+}
+th.col-index,td.col-index{width:70px;text-align:center}
+th.col-date,td.col-date{width:110px;text-align:center}
+th.col-num,td.col-num{width:100px;text-align:right;font-variant-numeric:tabular-nums}
+th.col-pdf,td.col-pdf{width:110px;text-align:center}
+th.col-loc,td.col-loc{width:170px}
+th.col-unit,td.col-unit{width:160px}
+tbody tr.row-paid-ok{background:#f2faf3}
+tbody tr.row-paid-ok:hover{background:#eaf6ee}
 a.link{color:var(--accent);text-decoration:none}a.link:hover{text-decoration:underline}
 .note{color:#8e8e93;font-size:12px;margin-top:6px}
 small.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;color:#6b7280}
@@ -180,13 +196,28 @@ small.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospa
     <!-- 表格 -->
     <div class="tableWrap" id="tableWrap" style="display:none">
       <table>
+        <colgroup>
+          <col class="col-index"/>
+          <col class="col-loc"/>
+          <col class="col-unit"/>
+          <col class="col-date"/>
+          <col class="col-num"/>
+          <col class="col-num"/>
+          <col class="col-num"/>
+          <col class="col-num"/>
+          <col class="col-pdf"/>
+        </colgroup>
         <thead>
           <tr>
-            <th style="width:80px">序号</th>
-            <th>工程地点及内容</th>
-            <th>单位名称</th>
-            <th style="width:120px">签订日期</th>
-            <th style="width:110px">合同额</th><th style="width:80px">PDF</th>
+            <th class="col-index">序号</th>
+            <th class="col-loc">工程地点及内容</th>
+            <th class="col-unit">单位名称</th>
+            <th class="col-date">签订日期</th>
+            <th class="col-num">合同额</th>
+            <th class="col-num">结算值</th>
+            <th class="col-num">已付款</th>
+            <th class="col-num">欠付款</th>
+            <th class="col-pdf">PDF</th>
           </tr>
         </thead>
         <tbody id="tbody"></tbody>
@@ -217,6 +248,32 @@ $("#state").innerHTML = (ok?'<span class="dot ok"></span> 已登录':'<span clas
   $("#loginCard").style.display = ok ? "none" : "block";
   $("#searchCard").style.display = ok ? "block" : "none";
   $("#tableWrap").style.display = ok ? "block" : "none";
+}
+function getCellValue(row, key){
+  if (!row || row[key] == null) return "";
+  return row[key];
+}
+function toNumber(value){
+  if (value == null) return null;
+  const text = String(value).replace(/[\s,]/g, "").replace(/[￥$]/g, "");
+  if (!text) return null;
+  const num = Number.parseFloat(text);
+  return Number.isNaN(num) ? null : num;
+}
+function isZeroish(value){
+  if (value == null) return true;
+  const raw = String(value).trim();
+  if (!raw) return true;
+  const num = toNumber(raw);
+  return num !== null && Math.abs(num) < 0.0001;
+}
+function shouldHighlightPaid(row){
+  const paid = toNumber(getCellValue(row, "已付款"));
+  const contract = toNumber(getCellValue(row, "合同额"));
+  const settle = toNumber(getCellValue(row, "结算值"));
+  const paidMatches = (paid != null && contract != null && Math.abs(paid - contract) < 0.0001)
+    || (paid != null && settle != null && Math.abs(paid - settle) < 0.0001);
+  return paidMatches && isZeroish(getCellValue(row, "欠付款"));
 }
 async function loginPOST(pwd){ return fetch('/api/mdirs/login',{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({password:pwd})}); }
 async function loginGET(pwd){ return fetch('/api/mdirs/login?password='+encodeURIComponent(pwd)); }
@@ -273,6 +330,7 @@ busy(true);
     const tb=$("#tbody"); tb.innerHTML="";
     (j.items||[]).forEach(x=>{
       const tr=document.createElement('tr');
+      if (shouldHighlightPaid(x)) tr.classList.add('row-paid-ok');
       const link = x.pdf_path
   ? `<div class="action-bar">
         <a class="btn-open" href="${x.pdf_path}" target="_blank" rel="noopener"><span class="ico">↗</span>打开</a>
@@ -280,11 +338,15 @@ busy(true);
      </div>`
   : `<span class="sub">无</span>`;
       tr.innerHTML=`
-        <td>${x["序号"]||""}</td>
-        <td class="clip" title="${(x["工程地点及内容"]||"").replace(/"/g,'&quot;')}">${x["工程地点及内容"]||""}</td>
-        <td class="clip" title="${(x["单位名称"]||"").replace(/"/g,'&quot;')}">${x["单位名称"]||""}</td>
-        <td>${x["签订日期"]||""}</td>
-        <td>${x["合同额"]||""}</td><td>${link}</td>`;
+        <td class="col-index">${getCellValue(x,"序号")}</td>
+        <td class="col-loc cell-wrap cell-clamp" title="${String(getCellValue(x,"工程地点及内容")).replace(/"/g,'&quot;')}">${getCellValue(x,"工程地点及内容")}</td>
+        <td class="col-unit cell-wrap cell-clamp" title="${String(getCellValue(x,"单位名称")).replace(/"/g,'&quot;')}">${getCellValue(x,"单位名称")}</td>
+        <td class="col-date">${getCellValue(x,"签订日期")}</td>
+        <td class="col-num">${getCellValue(x,"合同额")}</td>
+        <td class="col-num">${getCellValue(x,"结算值")}</td>
+        <td class="col-num">${getCellValue(x,"已付款")}</td>
+        <td class="col-num">${getCellValue(x,"欠付款")}</td>
+        <td class="col-pdf">${link}</td>`;
       tb.appendChild(tr);
     });
   }catch(e){ toast("请求失败"); }
