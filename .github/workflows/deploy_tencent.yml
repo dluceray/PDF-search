@@ -1,0 +1,92 @@
+name: Deploy to Tencent Server (Manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch/Tag/SHA to deploy (e.g. Tencent)"
+        required: true
+        default: "Tencent"
+
+concurrency:
+  group: deploy-tencent
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref }}
+          fetch-depth: 1
+
+      - name: Build deploy package (stable tar)
+        run: |
+          set -euo pipefail
+          echo "== workspace =="
+          pwd
+          ls -la
+
+          echo "== build package to /tmp (avoid self-including) =="
+          rm -f /tmp/pdfsearch.tgz ./pdfsearch.tgz || true
+
+          tar -czf /tmp/pdfsearch.tgz \
+            --exclude=.git \
+            --exclude=venv \
+            --exclude=pdfsearch.tgz \
+            .
+
+          ls -la /tmp/pdfsearch.tgz
+          cp -f /tmp/pdfsearch.tgz ./pdfsearch.tgz
+          ls -la ./pdfsearch.tgz
+
+      - name: Upload package to Tencent
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ vars.TENCENT_HOST }}
+          username: ${{ vars.TENCENT_USER }}
+          port: ${{ vars.TENCENT_PORT }}
+          key: ${{ secrets.TENCENT_SSH_KEY }}
+          source: "pdfsearch.tgz"
+          target: "/tmp"
+          overwrite: true
+
+      - name: Deploy on Tencent (extract + restart)
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ vars.TENCENT_HOST }}
+          username: ${{ vars.TENCENT_USER }}
+          port: ${{ vars.TENCENT_PORT }}
+          key: ${{ secrets.TENCENT_SSH_KEY }}
+          script_stop: true
+          command_timeout: 30m
+          script: |
+            set -euo pipefail
+
+            echo "== whoami / host =="
+            whoami
+            hostname
+            date
+
+            echo "== sanity: package exists? =="
+            ls -la /tmp/pdfsearch.tgz
+
+            echo "== deploy to /root/pdfsearch =="
+            cd /root/pdfsearch
+
+            TS="$(date +%Y%m%d_%H%M%S)"
+            mkdir -p /root/pdfsearch_backups
+            tar --exclude=venv --exclude=.git -czf "/root/pdfsearch_backups/pdfsearch_${TS}.tgz" . || true
+
+            tar -xzf /tmp/pdfsearch.tgz -C /root/pdfsearch
+
+            echo "== restart service =="
+            systemctl restart pdfsearch
+            sleep 1
+            systemctl --no-pager -l status pdfsearch | sed -n '1,80p'
+
+            systemctl is-active --quiet pdfsearch
+            echo "DEPLOY_OK"
