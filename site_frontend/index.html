@@ -42,11 +42,13 @@ td{font-size:13px}
 tbody tr:hover{background:#fafcff}
 td.clip{
   max-width:280px;
+  white-space:normal;
+  word-break:break-word;
+}
+.cell-clip{
   display:-webkit-box;
   -webkit-box-orient:vertical;
   -webkit-line-clamp:2;
-  white-space:normal;
-  word-break:break-word;
   overflow:hidden;
   text-overflow:ellipsis;
 }
@@ -348,8 +350,8 @@ busy(true);
   : `<span class="sub">无</span>`;
       tr.innerHTML=`
         <td class="col-index">${x["序号"]||""}</td>
-        <td class="clip col-loc" title="${(x["工程地点及内容"]||"").replace(/"/g,'&quot;')}">${x["工程地点及内容"]||""}</td>
-        <td class="clip col-unit" title="${(x["单位名称"]||"").replace(/"/g,'&quot;')}">${x["单位名称"]||""}</td>
+        <td class="clip col-loc"><div class="cell-clip" title="${(x["工程地点及内容"]||"").replace(/"/g,'&quot;')}">${x["工程地点及内容"]||""}</div></td>
+        <td class="clip col-unit"><div class="cell-clip" title="${(x["单位名称"]||"").replace(/"/g,'&quot;')}">${x["单位名称"]||""}</div></td>
         <td class="col-date">${x["签订日期"]||""}</td>
         <td class="col-num">${x["合同额"]||""}</td>
         <td class="col-num">${x["结算值"]||""}</td>
