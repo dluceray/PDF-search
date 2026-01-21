@@ -104,12 +104,20 @@ def ensure_year_index(root: Path, year: int) -> Optional[Path]:
     if idx_path:
         return idx_path
     tmpl = find_template_index(root, year)
-    if not tmpl:
-        return None
     year_dir.mkdir(parents=True, exist_ok=True)
     idx_path = year_dir / "index.xlsx"
-    shutil.copy2(tmpl, idx_path)
-    return idx_path
+    if tmpl:
+        shutil.copy2(tmpl, idx_path)
+        return idx_path
+    try:
+        from openpyxl import Workbook
+        wb = Workbook()
+        ws = wb.active
+        ws.append(STD_HEADER)
+        wb.save(idx_path)
+        return idx_path
+    except Exception:
+        return None
 
 def load_year_sheet(idx_path: Path, headers_needed: List[str]):
     if not idx_path or not idx_path.is_file():
