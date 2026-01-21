@@ -35,7 +35,7 @@ CONFIG: Dict = {
     "text_logic_or": False,               # 文本条件采用 AND（多条件都要命中）
 }
 
-RETURN_FIELDS = ["序号","工程地点及内容","单位名称","签订日期","合同额","合同编号","pdf_path","pdf_dl"]
+RETURN_FIELDS = ["序号","工程地点及内容","单位名称","签订日期","合同额","结算值","已付款","欠付款","合同编号","pdf_path","pdf_dl"]
 
 PASSWORD_FALLBACK = "1982567"
 PASSWORDS_FILE = os.path.join(os.path.dirname(__file__), "DATA", "passwords.txt")
@@ -231,6 +231,8 @@ def _load_all_rows():
         colmap={}
         for c in df.columns:
             k=str(c).strip()
+            k_clean = re.sub(r"[\s\u3000]+", "", k)
+            k_clean = re.sub(r"[（(].*?[)）]", "", k_clean)
             if k in ["序号","编号","合同编号"]: colmap[c]="序号" if "序号" in df.columns else "合同编号"
             if k in ["工程地点及内容","工程名称","项目名称","工程地点"]: colmap[c]="工程地点及内容"
             if k in ["单位名称","单位","甲方","客户名称"]: colmap[c]="单位名称"
@@ -239,6 +241,12 @@ def _load_all_rows():
             if k in ["结算值","结算金额"]: colmap[c]="结算值"
             if k in ["已付款","已支付","已付金额"]: colmap[c]="已付款"
             if k in ["欠付款","欠付","欠付金额"]: colmap[c]="欠付款"
+            if "结算" in k_clean and any(token in k_clean for token in ["值","价","金额"]):
+                colmap[c]="结算值"
+            if "已付" in k_clean and not any(token in k_clean for token in ["时间","日期"]):
+                colmap[c]="已付款"
+            if "欠付" in k_clean and not any(token in k_clean for token in ["时间","日期"]):
+                colmap[c]="欠付款"
         if colmap: df = df.rename(columns=colmap)
 
         for _,r in df.iterrows():
