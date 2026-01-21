@@ -22,9 +22,38 @@ from typing import List, Dict, Tuple, Optional
 
 YEAR_MIN, YEAR_MAX = 2000, 2050
 STD_HEADER = ["序号","工程地点及内容","单位名称","签订途径","启动时间","结果确定时间","签订日期","控制价","合同额","结算值","已付款","欠付款","备注"]
+HEADER_ALIASES = {
+    "序号": ["序号", "编号"],
+    "工程地点及内容": ["工程地点及内容", "工程地点", "工程内容"],
+    "单位名称": ["单位名称", "单位"],
+    "签订途径": ["签订途径", "签订方式"],
+    "启动时间": ["启动时间", "启动日期"],
+    "结果确定时间": ["结果确定时间", "结果确定日期"],
+    "签订日期": ["签订日期", "合同签订日期"],
+    "控制价": ["控制价", "控制金额"],
+    "合同额": ["合同额", "合同金额"],
+    "结算值": ["结算值", "结算金额"],
+    "已付款": ["已付款", "已支付", "已付金额"],
+    "欠付款": ["欠付款", "欠付", "欠付金额"],
+    "备注": ["备注", "备注说明"],
+}
 
 def ts(): return datetime.now().strftime("%Y%m%d%H%M%S")
 def header_equal(a,b): return len(a)==len(b) and all((a[i]==b[i]) for i in range(len(a)))
+def normalize_header_cells(row):
+    vals=[ ("" if v is None else str(v).strip()) for v in row ]
+    while vals and vals[-1]=="": vals.pop()
+    return vals
+def match_header(row):
+    cells = normalize_header_cells(row)
+    positions = []
+    for std in STD_HEADER:
+        aliases = HEADER_ALIASES.get(std, [std])
+        idx = next((i for i, c in enumerate(cells) if c in aliases), None)
+        if idx is None:
+            return False, [], cells
+        positions.append(idx)
+    return True, positions, cells
 def parse_year_from_seq(s: str):
     s=(s or "").strip()
     if len(s)<2 or not s[:2].isdigit(): return False,-1,"序号前两位非数字"
@@ -42,27 +71,29 @@ def find_index_file(year_dir: Path) -> Optional[Path]:
 
 def load_year_ids_and_check_header(idx_path: Path):
     ids=set()
-    if not idx_path or not idx_path.is_file(): return False, ids, "缺少index.xlsx"
+    if not idx_path or not idx_path.is_file(): return False, ids, "缺少index.xlsx", []
     try:
         from openpyxl import load_workbook
         wb=load_workbook(idx_path, data_only=True, read_only=True); ws=wb.active
         hdr=[ ("" if c.value is None else str(c.value).strip()) for c in ws[1] ]
         while hdr and hdr[-1]=="": hdr.pop()
-        if not header_equal(hdr, STD_HEADER): return False, ids, "目标索引表头不一致"
+        ok_hdr, _pos, _cells = match_header(hdr)
+        if not ok_hdr: return False, ids, "目标索引表头不一致", []
+        seq_col = _pos[0] + 1
         for r in ws.iter_rows(min_row=2, values_only=True):
             if not r: continue
-            v=r[0]
+            v=r[seq_col-1] if seq_col-1 < len(r) else None
             if v is None: continue
             ids.add(str(v).strip())
-        return True, ids, ""
+        return True, ids, "", _pos
     except Exception as e:
-        return False, ids, f"无法读取index.xlsx:{e}"
+        return False, ids, f"无法读取index.xlsx:{e}", []
 
 
-def backup_and_append(idx_path: Path, rows):
+def backup_and_append(idx_path: Path, rows, header_positions):
     """
     写入策略（占空+尾追加）：
-    - 优先把记录写入 A列(序号)为空的既有行（即便该行有边框/样式，也视为空槽）；
+    - 优先把记录写入 “序号” 列为空的既有行（即便该行有边框/样式，也视为空槽）；
     - 空槽用尽后，再使用 ws.append() 追加到表尾。
     """
     from openpyxl import load_workbook
@@ -73,12 +104,13 @@ def backup_and_append(idx_path: Path, rows):
     wb = load_workbook(idx_path)
     ws = wb.active
 
+    seq_col = header_positions[0] + 1
     def a_col_empty(r):
-        return (ws.cell(row=r, column=1).value in (None, ""))
+        return (ws.cell(row=r, column=seq_col).value in (None, ""))
     from openpyxl.cell.cell import MergedCell
     def _row_has_merged(r):
-        for _ci in range(1, len(STD_HEADER)+1):
-            if isinstance(ws.cell(row=r, column=_ci), MergedCell):
+        for _ci in header_positions:
+            if isinstance(ws.cell(row=r, column=_ci + 1), MergedCell):
                 return True
         return False
 
@@ -90,31 +122,38 @@ def backup_and_append(idx_path: Path, rows):
         while r_ptr <= maxr and (not a_col_empty(r_ptr) or _row_has_merged(r_ptr)):
             r_ptr += 1
         if r_ptr <= maxr:
-            for ci, val in enumerate(rec, start=1):
-                ws.cell(row=r_ptr, column=ci, value=val)
+            for std_idx, val in enumerate(rec):
+                col = header_positions[std_idx] + 1
+                ws.cell(row=r_ptr, column=col, value=val)
             r_ptr += 1
         else:
             # 空槽用尽才追加
-            ws.append(rec)
+            for std_idx, val in enumerate(rec):
+                col = header_positions[std_idx] + 1
+                ws.cell(row=ws.max_row + 1, column=col, value=val)
 
     wb.save(tmp)
     os.replace(tmp, idx_path)
     return bak.name
 def detect_header_row(values_rows, mode:str):
-    def trim(row):
-        vals=[ ("" if v is None else str(v).strip()) for v in row ]
-        while vals and vals[-1]=="": vals.pop()
-        return vals
-    rows=[trim(r) for r in values_rows[:2]]
+    rows=[normalize_header_cells(r) for r in values_rows[:2]]
     if mode=="2":
         hdr = rows[1] if len(rows)>1 else []
-        return (len(rows)>1 and header_equal(hdr, STD_HEADER), 1, "表头不匹配" if not (len(rows)>1 and header_equal(hdr,STD_HEADER)) else "", hdr)
+        ok, pos, _cells = match_header(hdr) if len(rows)>1 else (False, [], [])
+        return (len(rows)>1 and ok, 1, "表头不匹配" if not (len(rows)>1 and ok) else "", hdr, pos)
     if mode=="1":
         hdr = rows[0] if rows else []
-        return (len(rows)>0 and header_equal(hdr, STD_HEADER), 0, "表头不匹配" if not (len(rows)>0 and header_equal(hdr,STD_HEADER)) else "", hdr)
-    if len(rows)>1 and header_equal(rows[1], STD_HEADER): return True,1,"",rows[1]
-    if len(rows)>0 and header_equal(rows[0], STD_HEADER): return True,0,"",rows[0]
-    return False,-1,"前两行均非标准表头", rows[0] if rows else []
+        ok, pos, _cells = match_header(hdr) if len(rows)>0 else (False, [], [])
+        return (len(rows)>0 and ok, 0, "表头不匹配" if not (len(rows)>0 and ok) else "", hdr, pos)
+    if len(rows)>1:
+        ok, pos, _cells = match_header(rows[1])
+        if ok:
+            return True,1,"",rows[1], pos
+    if len(rows)>0:
+        ok, pos, _cells = match_header(rows[0])
+        if ok:
+            return True,0,"",rows[0], pos
+    return False,-1,"前两行均非标准表头", rows[0] if rows else [], []
 
 def load_pending_rows(xlsx_path: Path, header_mode: str):
     ext = xlsx_path.suffix.lower()
@@ -127,14 +166,17 @@ def load_pending_rows(xlsx_path: Path, header_mode: str):
             wb = load_workbook(xlsx_path, data_only=True, read_only=True)
             for ws in wb.worksheets:
                 values_rows = [ (list(r) if r else []) for r in ws.iter_rows(min_row=1, values_only=True) ]
-                ok, hdr_idx, why, _hdr = detect_header_row(values_rows, header_mode)
+                ok, hdr_idx, why, _hdr, pos = detect_header_row(values_rows, header_mode)
                 if not ok:
                     errors.append(f"{ws.title}: {why}")
                     continue
                 for r in values_rows[hdr_idx+1:]:
                     r = list(r) if isinstance(r, (list, tuple)) else [r]
-                    r += [""] * (N - len(r))
-                    rows_out.append(r[:N])
+                    row = []
+                    for ci in pos:
+                        row.append(r[ci] if ci < len(r) else "")
+                    row += [""] * (N - len(row))
+                    rows_out.append(row[:N])
         elif ext == ".xls":
             try:
                 import xlrd  # 1.2.0
@@ -144,14 +186,17 @@ def load_pending_rows(xlsx_path: Path, header_mode: str):
             for si in range(book.nsheets):
                 sh = book.sheet_by_index(si)
                 values_rows = [[sh.cell_value(i,j) for j in range(sh.ncols)] for i in range(sh.nrows)]
-                ok, hdr_idx, why, _hdr = detect_header_row(values_rows, header_mode)
+                ok, hdr_idx, why, _hdr, pos = detect_header_row(values_rows, header_mode)
                 if not ok:
                     errors.append(f"{sh.name}: {why}")
                     continue
                 for r in values_rows[hdr_idx+1:]:
                     r = list(r) if isinstance(r, (list, tuple)) else [r]
-                    r += [""] * (N - len(r))
-                    rows_out.append(r[:N])
+                    row = []
+                    for ci in pos:
+                        row.append(r[ci] if ci < len(r) else "")
+                    row += [""] * (N - len(row))
+                    rows_out.append(row[:N])
         else:
             return False, "不支持的扩展名（仅 .xlsx/.xls）", []
     except Exception as e:
@@ -162,7 +207,7 @@ def load_pending_rows(xlsx_path: Path, header_mode: str):
     return True, "", rows_out
 
 
-def process_file(xlsx: Path, root: Path, header_mode: str, year_cache: Dict[int, Tuple[Path,set]]):
+def process_file(xlsx: Path, root: Path, header_mode: str, year_cache: Dict[int, Tuple[Path,set,list]]):
     res={"file": xlsx.name, "added":0, "skipped":0, "invalid":0, "details":[]}
     ok, why, rows = load_pending_rows(xlsx, header_mode)
     if not ok: return {"file": xlsx.name, "__file_failed__": True, "reason": why}
@@ -179,18 +224,18 @@ def process_file(xlsx: Path, root: Path, header_mode: str, year_cache: Dict[int,
         cache = year_cache.get(year)
         if cache is None:
             idx_path = find_index_file(year_dir)
-            ok_idx, existing, why2 = load_year_ids_and_check_header(idx_path)
+            ok_idx, existing, why2, header_positions = load_year_ids_and_check_header(idx_path)
             if not ok_idx:
                 res["invalid"] += 1; res["details"].append({"seq":seq,"year":year,"status":"invalid","reason":why2}); continue
-            year_cache[year]=(idx_path, existing)
+            year_cache[year]=(idx_path, existing, header_positions)
         else:
-            idx_path, existing = cache
+            idx_path, existing, header_positions = cache
         if seq in year_cache[year][1]:
             res["skipped"]+=1; res["details"].append({"seq":seq,"year":year,"status":"skipped"}); continue
         buckets.setdefault(year, []).append(r)
     for year, rows2 in buckets.items():
         if not rows2: continue
-        idx_path, existing = year_cache[year]
+        idx_path, existing, header_positions = year_cache[year]
         lock = idx_path.with_name(idx_path.name + ".lock")
         waited=0.0
         while lock.exists():
@@ -198,11 +243,11 @@ def process_file(xlsx: Path, root: Path, header_mode: str, year_cache: Dict[int,
             if waited>5.0: return {"file": xlsx.name, "__file_failed__": True, "reason": f"年索引被锁:{idx_path.name}"}
         try:
             lock.touch()
-            bak = backup_and_append(idx_path, rows2)
+            bak = backup_and_append(idx_path, rows2, header_positions)
             res["details"].append({"year":year,"status":"wrote","rows":len(rows2),"backup":bak})
             res["added"] += len(rows2)
             for rr in rows2: existing.add(str(rr[0]).strip())
-            year_cache[year]=(idx_path, existing)
+            year_cache[year]=(idx_path, existing, header_positions)
         finally:
             try: lock.unlink(missing_ok=True)
             except: pass
@@ -229,7 +274,7 @@ def main():
         from pathlib import Path as _P
         _P("/tmp/ingest_scan.json").write_text("\n".join(f.name for f in files)+"\n", encoding="utf-8")
         total={"files_total":len(files),"files_processed":0,"files_failed":0,"rows_added":0,"rows_skipped":0,"rows_invalid":0,"per_file":[]}
-        year_cache: Dict[int, Tuple[Path,set]]={}
+        year_cache: Dict[int, Tuple[Path,set,list]]={}
         for f in files:
             res=process_file(f, root, args.header_row, year_cache)
             if res.get("__file_failed__"):
