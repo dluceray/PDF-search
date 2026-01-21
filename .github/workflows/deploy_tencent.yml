@@ -83,6 +83,12 @@ jobs:
 
             tar -xzf /tmp/pdfsearch.tgz -C /root/pdfsearch
 
+            echo "== sync frontend to /www/wwwroot/gfwzb.com =="
+            command -v rsync >/dev/null 2>&1 || (apt-get update -y && apt-get install -y rsync)
+            mkdir -p /www/wwwroot/gfwzb.com
+            rsync -a --delete --exclude=.user.ini /root/pdfsearch/site_frontend/ /www/wwwroot/gfwzb.com/
+            find /www/wwwroot/gfwzb.com -mindepth 1 -name .user.ini -prune -o -exec chmod 755 {} +
+
             echo "== restart service =="
             systemctl restart pdfsearch
             sleep 1
