@@ -6,6 +6,7 @@ from openpyxl import load_workbook
 
 ROOT = Path("/data/contracts")
 STD_HEADER = ["序号","工程地点及内容","单位名称","签订途径","启动时间","结果确定时间","签订日期","控制价","合同额","结算值","已付款","欠付款","备注"]
+REQUIRED_HEADER = ["序号", "工程地点及内容", "单位名称"]
 HEADER_ALIASES = {
     "序号": ["序号", "编号"],
     "工程地点及内容": ["工程地点及内容", "工程地点", "工程内容"],
@@ -25,7 +26,7 @@ HEADER_ALIASES = {
 def header_equal(a,b): return len(a)==len(b) and all((a[i]==b[i]) for i in range(len(a)))
 def match_header(row):
     cells = trim(row)
-    for std in STD_HEADER:
+    for std in REQUIRED_HEADER:
         aliases = HEADER_ALIASES.get(std, [std])
         if not any(c in aliases for c in cells):
             return False
