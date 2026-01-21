@@ -166,6 +166,8 @@ def load_pending_rows(xlsx_path: Path, header_mode: str):
             wb = load_workbook(xlsx_path, data_only=True, read_only=True)
             for ws in wb.worksheets:
                 values_rows = [ (list(r) if r else []) for r in ws.iter_rows(min_row=1, values_only=True) ]
+                if not any(any((v is not None and str(v).strip() != "") for v in row) for row in values_rows):
+                    continue
                 ok, hdr_idx, why, _hdr, pos = detect_header_row(values_rows, header_mode)
                 if not ok:
                     errors.append(f"{ws.title}: {why}")
@@ -186,6 +188,8 @@ def load_pending_rows(xlsx_path: Path, header_mode: str):
             for si in range(book.nsheets):
                 sh = book.sheet_by_index(si)
                 values_rows = [[sh.cell_value(i,j) for j in range(sh.ncols)] for i in range(sh.nrows)]
+                if not any(any((v is not None and str(v).strip() != "") for v in row) for row in values_rows):
+                    continue
                 ok, hdr_idx, why, _hdr, pos = detect_header_row(values_rows, header_mode)
                 if not ok:
                     errors.append(f"{sh.name}: {why}")
