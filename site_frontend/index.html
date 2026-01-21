@@ -40,7 +40,16 @@ thead th{position:sticky;top:0;background:#fafafa;border-bottom:1px solid var(--
 th,td{padding:10px 12px;border-bottom:1px solid #f0f0f0;vertical-align:top}
 td{font-size:13px}
 tbody tr:hover{background:#fafcff}
-td.clip{max-width:280px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+td.clip{
+  max-width:280px;
+  display:-webkit-box;
+  -webkit-box-orient:vertical;
+  -webkit-line-clamp:2;
+  white-space:normal;
+  word-break:break-word;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
 td.cell-wrap{white-space:normal;word-break:break-word}
 td.cell-clamp{
   display:-webkit-box;
