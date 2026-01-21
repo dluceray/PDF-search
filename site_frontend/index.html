@@ -340,6 +340,8 @@ busy(true);
     $("#count").textContent=((j.count_strict|0)||(j.count|0)||0)+" 条";
     const tb=$("#tbody"); tb.innerHTML="";
     (j.items||[]).forEach(x=>{
+      const indexValue = (x["序号"] ?? "").toString().trim();
+      if (!indexValue) return;
       const tr=document.createElement('tr');
       if (shouldHighlightPaid(x)) tr.classList.add('row-paid-ok');
       const link = x.pdf_path
@@ -349,7 +351,7 @@ busy(true);
      </div>`
   : `<span class="sub">无</span>`;
       tr.innerHTML=`
-        <td class="col-index">${x["序号"]||""}</td>
+        <td class="col-index">${indexValue}</td>
         <td class="clip col-loc"><div class="cell-clip" title="${(x["工程地点及内容"]||"").replace(/"/g,'&quot;')}">${x["工程地点及内容"]||""}</div></td>
         <td class="clip col-unit"><div class="cell-clip" title="${(x["单位名称"]||"").replace(/"/g,'&quot;')}">${x["单位名称"]||""}</div></td>
         <td class="col-date">${x["签订日期"]||""}</td>

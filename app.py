@@ -253,7 +253,9 @@ def _load_all_rows():
             item={k:str(r.get(k,"")).strip() for k in ["序号","工程地点及内容","单位名称","签订日期","合同额","结算值","已付款","欠付款","合同编号"] if k in df.columns}
             item["签订日期_norm"] = _norm_date(item.get("签订日期",""))
 
-            base = item.get("序号") or item.get("合同编号","")
+            base = (item.get("序号") or item.get("合同编号","") or "").strip()
+            if not base:
+                continue
             pdf_guess = _find_pdf(scan_root, base, CONFIG.get("allowed_exts", [".pdf"]), CONFIG.get("pdf_subdirs", ["DOCS","docs"]))
 
             item["pdf_path"] = ""; item["pdf_dl"] = ""
