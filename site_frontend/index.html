@@ -209,15 +209,15 @@ small.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospa
         </colgroup>
         <thead>
           <tr>
-            <th class="col-index">序号</th>
-            <th class="col-loc">工程地点及内容</th>
-            <th class="col-unit">单位名称</th>
-            <th class="col-date">签订日期</th>
-            <th class="col-num">合同额</th>
-            <th class="col-num">结算值</th>
-            <th class="col-num">已付款</th>
-            <th class="col-num">欠付款</th>
-            <th class="col-pdf">PDF</th>
+            <th style="width:80px">序号</th>
+            <th>工程地点及内容</th>
+            <th>单位名称</th>
+            <th style="width:120px">签订日期</th>
+            <th style="width:110px">合同额</th>
+            <th style="width:90px">结算值</th>
+            <th style="width:90px">已付款</th>
+            <th style="width:90px">欠付款</th>
+            <th style="width:80px">PDF</th>
           </tr>
         </thead>
         <tbody id="tbody"></tbody>
@@ -338,15 +338,15 @@ busy(true);
      </div>`
   : `<span class="sub">无</span>`;
       tr.innerHTML=`
-        <td class="col-index">${getCellValue(x,"序号")}</td>
-        <td class="col-loc cell-wrap cell-clamp" title="${String(getCellValue(x,"工程地点及内容")).replace(/"/g,'&quot;')}">${getCellValue(x,"工程地点及内容")}</td>
-        <td class="col-unit cell-wrap cell-clamp" title="${String(getCellValue(x,"单位名称")).replace(/"/g,'&quot;')}">${getCellValue(x,"单位名称")}</td>
-        <td class="col-date">${getCellValue(x,"签订日期")}</td>
-        <td class="col-num">${getCellValue(x,"合同额")}</td>
-        <td class="col-num">${getCellValue(x,"结算值")}</td>
-        <td class="col-num">${getCellValue(x,"已付款")}</td>
-        <td class="col-num">${getCellValue(x,"欠付款")}</td>
-        <td class="col-pdf">${link}</td>`;
+        <td>${x["序号"]||""}</td>
+        <td class="clip" title="${(x["工程地点及内容"]||"").replace(/"/g,'&quot;')}">${x["工程地点及内容"]||""}</td>
+        <td class="clip" title="${(x["单位名称"]||"").replace(/"/g,'&quot;')}">${x["单位名称"]||""}</td>
+        <td>${x["签订日期"]||""}</td>
+        <td>${x["合同额"]||""}</td>
+        <td>${x["结算值"]||""}</td>
+        <td>${x["已付款"]||""}</td>
+        <td>${x["欠付款"]||""}</td>
+        <td>${link}</td>`;
       tb.appendChild(tr);
     });
   }catch(e){ toast("请求失败"); }

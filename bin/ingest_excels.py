@@ -22,6 +22,7 @@ from typing import List, Dict, Tuple, Optional
 
 YEAR_MIN, YEAR_MAX = 2000, 2050
 STD_HEADER = ["序号","工程地点及内容","单位名称","签订途径","启动时间","结果确定时间","签订日期","控制价","合同额","结算值","已付款","欠付款","备注"]
+REQUIRED_HEADER = ["序号", "工程地点及内容", "单位名称"]
 HEADER_ALIASES = {
     "序号": ["序号", "编号"],
     "工程地点及内容": ["工程地点及内容", "工程地点", "工程内容"],
@@ -44,16 +45,30 @@ def normalize_header_cells(row):
     vals=[ ("" if v is None else str(v).strip()) for v in row ]
     while vals and vals[-1]=="": vals.pop()
     return vals
+def canonicalize_header(cell: str):
+    val = (cell or "").strip()
+    if not val:
+        return ""
+    for std, aliases in HEADER_ALIASES.items():
+        if val in aliases:
+            return std
+    return val
+def header_map_from_cells(cells: List[str]):
+    header_map = {}
+    headers = []
+    for i, cell in enumerate(cells):
+        name = canonicalize_header(cell)
+        headers.append(name)
+        if name and name not in header_map:
+            header_map[name] = i
+    return header_map, headers
 def match_header(row):
     cells = normalize_header_cells(row)
-    positions = []
-    for std in STD_HEADER:
-        aliases = HEADER_ALIASES.get(std, [std])
-        idx = next((i for i, c in enumerate(cells) if c in aliases), None)
-        if idx is None:
-            return False, [], cells
-        positions.append(idx)
-    return True, positions, cells
+    header_map, headers = header_map_from_cells(cells)
+    missing_required = [k for k in REQUIRED_HEADER if k not in header_map]
+    if missing_required:
+        return False, {}, headers
+    return True, header_map, headers
 def parse_year_from_seq(s: str):
     s=(s or "").strip()
     if len(s)<2 or not s[:2].isdigit(): return False,-1,"序号前两位非数字"
@@ -96,97 +111,112 @@ def ensure_year_index(root: Path, year: int) -> Optional[Path]:
     shutil.copy2(tmpl, idx_path)
     return idx_path
 
-def load_year_ids_and_check_header(idx_path: Path):
-    ids=set()
-    if not idx_path or not idx_path.is_file(): return False, ids, "缺少index.xlsx", []
+def load_year_sheet(idx_path: Path, headers_needed: List[str]):
+    if not idx_path or not idx_path.is_file():
+        return False, None, None, {}, {}, "缺少index.xlsx"
     try:
         from openpyxl import load_workbook
-        wb=load_workbook(idx_path, data_only=True, read_only=True); ws=wb.active
+        wb=load_workbook(idx_path); ws=wb.active
         hdr=[ ("" if c.value is None else str(c.value).strip()) for c in ws[1] ]
-        while hdr and hdr[-1]=="": hdr.pop()
-        ok_hdr, _pos, _cells = match_header(hdr)
-        if not ok_hdr: return False, ids, "目标索引表头不一致", []
-        seq_col = _pos[0] + 1
-        for r in ws.iter_rows(min_row=2, values_only=True):
-            if not r: continue
-            v=r[seq_col-1] if seq_col-1 < len(r) else None
-            if v is None: continue
-            ids.add(str(v).strip())
-        return True, ids, "", _pos
+        header_map, _headers = header_map_from_cells(hdr)
+        for key in REQUIRED_HEADER:
+            if key not in header_map:
+                col = ws.max_column + 1
+                ws.cell(row=1, column=col, value=key)
+                header_map[key] = col - 1
+        for key in headers_needed:
+            if key and key not in header_map:
+                col = ws.max_column + 1
+                ws.cell(row=1, column=col, value=key)
+                header_map[key] = col - 1
+        seq_pos = header_map.get("序号")
+        if seq_pos is None:
+            return False, None, None, {}, {}, "索引表缺少必填列: 序号"
+        seq_map = {}
+        for r in ws.iter_rows(min_row=2):
+            if not r:
+                continue
+            val = r[seq_pos].value if seq_pos < len(r) else None
+            if val is None:
+                continue
+            seq = str(val).strip()
+            if not seq:
+                continue
+            seq_map[seq] = r[0].row
+        return True, wb, ws, header_map, seq_map, ""
     except Exception as e:
-        return False, ids, f"无法读取index.xlsx:{e}", []
+        return False, None, None, {}, {}, f"无法读取index.xlsx:{e}"
 
 
-def backup_and_append(idx_path: Path, rows, header_positions):
+def backup_and_merge(idx_path: Path, rows, headers_needed: List[str]):
     """
-    写入策略（占空+尾追加）：
-    - 优先把记录写入 “序号” 列为空的既有行（即便该行有边框/样式，也视为空槽）；
-    - 空槽用尽后，再使用 ws.append() 追加到表尾。
+    写入策略（覆盖+追加）：
+    - 若序号已存在，则按导入值覆盖该行对应列；
+    - 若序号不存在，则追加新行；
+    - 若导入包含服务端缺失的列，则自动新增列。
     """
-    from openpyxl import load_workbook
-    bak = idx_path.with_name(idx_path.name + f".bak.{ts()}")
+    date_dir = idx_path.parent / datetime.now().strftime("%Y%m%d")
+    date_dir.mkdir(parents=True, exist_ok=True)
+    bak = date_dir / idx_path.name
+    if bak.exists():
+        bak = date_dir / f"{idx_path.stem}.{ts()}{idx_path.suffix}"
     tmp = idx_path.with_suffix(".tmp.xlsx")
     shutil.copy2(idx_path, bak)
 
-    wb = load_workbook(idx_path)
-    ws = wb.active
+    ok, wb, ws, header_map, seq_map, why = load_year_sheet(idx_path, headers_needed)
+    if not ok:
+        raise ValueError(why)
 
-    seq_col = header_positions[0] + 1
-    def a_col_empty(r):
-        return (ws.cell(row=r, column=seq_col).value in (None, ""))
-    from openpyxl.cell.cell import MergedCell
-    def _row_has_merged(r):
-        for _ci in header_positions:
-            if isinstance(ws.cell(row=r, column=_ci + 1), MergedCell):
-                return True
-        return False
-
-
-    r_ptr = 2
-    maxr = ws.max_row  # 含已画表格的空行
+    added = 0
+    updated = 0
     for rec in rows:
-        # 先占用 “序号” 列为空的空槽
-        while r_ptr <= maxr and (not a_col_empty(r_ptr) or _row_has_merged(r_ptr)):
-            r_ptr += 1
-        if r_ptr <= maxr:
-            for std_idx, val in enumerate(rec):
-                col = header_positions[std_idx] + 1
-                ws.cell(row=r_ptr, column=col, value=val)
-            r_ptr += 1
+        seq = str(rec.get("序号", "") or "").strip()
+        if not seq:
+            continue
+        row_idx = seq_map.get(seq)
+        if row_idx is None:
+            row_idx = ws.max_row + 1
+            seq_map[seq] = row_idx
+            added += 1
         else:
-            # 空槽用尽才追加
-            for std_idx, val in enumerate(rec):
-                col = header_positions[std_idx] + 1
-                ws.cell(row=ws.max_row + 1, column=col, value=val)
+            updated += 1
+        for key, val in rec.items():
+            if not key:
+                continue
+            if key not in header_map:
+                col = ws.max_column + 1
+                ws.cell(row=1, column=col, value=key)
+                header_map[key] = col - 1
+            ws.cell(row=row_idx, column=header_map[key] + 1, value=val)
 
     wb.save(tmp)
     os.replace(tmp, idx_path)
-    return bak.name
+    return bak.name, added, updated
 def detect_header_row(values_rows, mode:str):
     rows=[normalize_header_cells(r) for r in values_rows[:2]]
     if mode=="2":
         hdr = rows[1] if len(rows)>1 else []
-        ok, pos, _cells = match_header(hdr) if len(rows)>1 else (False, [], [])
-        return (len(rows)>1 and ok, 1, "表头不匹配" if not (len(rows)>1 and ok) else "", hdr, pos)
+        ok, header_map, cells = match_header(hdr) if len(rows)>1 else (False, {}, [])
+        return (len(rows)>1 and ok, 1, "表头不匹配" if not (len(rows)>1 and ok) else "", cells, header_map)
     if mode=="1":
         hdr = rows[0] if rows else []
-        ok, pos, _cells = match_header(hdr) if len(rows)>0 else (False, [], [])
-        return (len(rows)>0 and ok, 0, "表头不匹配" if not (len(rows)>0 and ok) else "", hdr, pos)
+        ok, header_map, cells = match_header(hdr) if len(rows)>0 else (False, {}, [])
+        return (len(rows)>0 and ok, 0, "表头不匹配" if not (len(rows)>0 and ok) else "", cells, header_map)
     if len(rows)>1:
-        ok, pos, _cells = match_header(rows[1])
+        ok, header_map, cells = match_header(rows[1])
         if ok:
-            return True,1,"",rows[1], pos
+            return True,1,"",cells, header_map
     if len(rows)>0:
-        ok, pos, _cells = match_header(rows[0])
+        ok, header_map, cells = match_header(rows[0])
         if ok:
-            return True,0,"",rows[0], pos
-    return False,-1,"前两行均非标准表头", rows[0] if rows else [], []
+            return True,0,"",cells, header_map
+    return False,-1,"前两行均非标准表头", rows[0] if rows else [], {}
 
 def load_pending_rows(xlsx_path: Path, header_mode: str):
     ext = xlsx_path.suffix.lower()
     errors = []
     rows_out = []
-    N = len(STD_HEADER)
+    headers_seen = []
     try:
         if ext == ".xlsx":
             from openpyxl import load_workbook
@@ -195,78 +225,73 @@ def load_pending_rows(xlsx_path: Path, header_mode: str):
                 values_rows = [ (list(r) if r else []) for r in ws.iter_rows(min_row=1, values_only=True) ]
                 if not any(any((v is not None and str(v).strip() != "") for v in row) for row in values_rows):
                     continue
-                ok, hdr_idx, why, _hdr, pos = detect_header_row(values_rows, header_mode)
+                ok, hdr_idx, why, hdr_cells, header_map = detect_header_row(values_rows, header_mode)
                 if not ok:
                     errors.append(f"{ws.title}: {why}")
                     continue
+                for h in hdr_cells:
+                    if h and h not in headers_seen:
+                        headers_seen.append(h)
                 for r in values_rows[hdr_idx+1:]:
                     r = list(r) if isinstance(r, (list, tuple)) else [r]
-                    row = []
-                    for ci in pos:
-                        row.append(r[ci] if ci < len(r) else "")
-                    row += [""] * (N - len(row))
-                    rows_out.append(row[:N])
+                    row = {}
+                    for key, ci in header_map.items():
+                        row[key] = r[ci] if ci < len(r) else ""
+                    rows_out.append(row)
         elif ext == ".xls":
             try:
                 import xlrd  # 1.2.0
             except Exception:
-                return False, "处理 .xls 需要安装 xlrd==1.2.0", []
+                return False, "处理 .xls 需要安装 xlrd==1.2.0", [], []
             book = xlrd.open_workbook(xlsx_path, formatting_info=False)
             for si in range(book.nsheets):
                 sh = book.sheet_by_index(si)
                 values_rows = [[sh.cell_value(i,j) for j in range(sh.ncols)] for i in range(sh.nrows)]
                 if not any(any((v is not None and str(v).strip() != "") for v in row) for row in values_rows):
                     continue
-                ok, hdr_idx, why, _hdr, pos = detect_header_row(values_rows, header_mode)
+                ok, hdr_idx, why, hdr_cells, header_map = detect_header_row(values_rows, header_mode)
                 if not ok:
                     errors.append(f"{sh.name}: {why}")
                     continue
+                for h in hdr_cells:
+                    if h and h not in headers_seen:
+                        headers_seen.append(h)
                 for r in values_rows[hdr_idx+1:]:
                     r = list(r) if isinstance(r, (list, tuple)) else [r]
-                    row = []
-                    for ci in pos:
-                        row.append(r[ci] if ci < len(r) else "")
-                    row += [""] * (N - len(row))
-                    rows_out.append(row[:N])
+                    row = {}
+                    for key, ci in header_map.items():
+                        row[key] = r[ci] if ci < len(r) else ""
+                    rows_out.append(row)
         else:
-            return False, "不支持的扩展名（仅 .xlsx/.xls）", []
+            return False, "不支持的扩展名（仅 .xlsx/.xls）", [], []
     except Exception as e:
-        return False, f"无法读取Excel: {e}", []
+        return False, f"无法读取Excel: {e}", [], []
 
     if errors:
-        return False, "以下工作表不符合要求（全部中止处理）：" + "; ".join(errors), []
-    return True, "", rows_out
+        return False, "以下工作表不符合要求（全部中止处理）：" + "; ".join(errors), [], []
+    return True, "", rows_out, headers_seen
 
 
-def process_file(xlsx: Path, root: Path, header_mode: str, year_cache: Dict[int, Tuple[Path,set,list]]):
-    res={"file": xlsx.name, "added":0, "skipped":0, "invalid":0, "details":[]}
-    ok, why, rows = load_pending_rows(xlsx, header_mode)
+def process_file(xlsx: Path, root: Path, header_mode: str):
+    res={"file": xlsx.name, "added":0, "updated":0, "skipped":0, "invalid":0, "details":[]}
+    ok, why, rows, headers_seen = load_pending_rows(xlsx, header_mode)
     if not ok: return {"file": xlsx.name, "__file_failed__": True, "reason": why}
-    buckets: Dict[int, List[List]] = {}
+    buckets: Dict[int, List[Dict]] = {}
     for r in rows:
-        seq = "" if r[0] is None else str(r[0]).strip()
+        seq = "" if r.get("序号") is None else str(r.get("序号")).strip()
         if seq=="":
             res["invalid"]+=1; res["details"].append({"seq":None,"status":"invalid","reason":"序号为空"}); continue
         ok_year,year,rr = parse_year_from_seq(seq)
         if not ok_year:
             res["invalid"]+=1; res["details"].append({"seq":seq,"status":"invalid","reason":rr}); continue
-        year_dir = root/str(year)
-        idx_path = None
-        cache = year_cache.get(year)
-        if cache is None:
-            idx_path = ensure_year_index(root, year)
-            ok_idx, existing, why2, header_positions = load_year_ids_and_check_header(idx_path)
-            if not ok_idx:
-                res["invalid"] += 1; res["details"].append({"seq":seq,"year":year,"status":"invalid","reason":why2}); continue
-            year_cache[year]=(idx_path, existing, header_positions)
-        else:
-            idx_path, existing, header_positions = cache
-        if seq in year_cache[year][1]:
-            res["skipped"]+=1; res["details"].append({"seq":seq,"year":year,"status":"skipped"}); continue
         buckets.setdefault(year, []).append(r)
     for year, rows2 in buckets.items():
         if not rows2: continue
-        idx_path, existing, header_positions = year_cache[year]
+        idx_path = ensure_year_index(root, year)
+        if not idx_path:
+            res["invalid"] += len(rows2)
+            res["details"].append({"year": year, "status":"invalid", "reason":"缺少index.xlsx模板"})
+            continue
         lock = idx_path.with_name(idx_path.name + ".lock")
         waited=0.0
         while lock.exists():
@@ -274,11 +299,10 @@ def process_file(xlsx: Path, root: Path, header_mode: str, year_cache: Dict[int,
             if waited>5.0: return {"file": xlsx.name, "__file_failed__": True, "reason": f"年索引被锁:{idx_path.name}"}
         try:
             lock.touch()
-            bak = backup_and_append(idx_path, rows2, header_positions)
+            bak, added, updated = backup_and_merge(idx_path, rows2, headers_seen)
             res["details"].append({"year":year,"status":"wrote","rows":len(rows2),"backup":bak})
-            res["added"] += len(rows2)
-            for rr in rows2: existing.add(str(rr[0]).strip())
-            year_cache[year]=(idx_path, existing, header_positions)
+            res["added"] += added
+            res["updated"] += updated
         finally:
             try: lock.unlink(missing_ok=True)
             except: pass
@@ -304,17 +328,16 @@ def main():
         files.sort(key=lambda p: p.stat().st_mtime)
         from pathlib import Path as _P
         _P("/tmp/ingest_scan.json").write_text("\n".join(f.name for f in files)+"\n", encoding="utf-8")
-        total={"files_total":len(files),"files_processed":0,"files_failed":0,"rows_added":0,"rows_skipped":0,"rows_invalid":0,"per_file":[]}
-        year_cache: Dict[int, Tuple[Path,set,list]]={}
+        total={"files_total":len(files),"files_processed":0,"files_failed":0,"rows_added":0,"rows_updated":0,"rows_skipped":0,"rows_invalid":0,"per_file":[]}
         for f in files:
-            res=process_file(f, root, args.header_row, year_cache)
+            res=process_file(f, root, args.header_row)
             if res.get("__file_failed__"):
                 error.mkdir(parents=True, exist_ok=True); shutil.move(str(f), str(error/f.name))
                 if res.get("reason"): (error/(f.name + ".reason.txt")).write_text(res["reason"], encoding="utf-8")
                 total["files_failed"]+=1; total["per_file"].append(res); continue
             done.mkdir(parents=True, exist_ok=True); shutil.move(str(f), str(done/f.name))
             total["files_processed"]+=1
-            total["rows_added"]+=res["added"]; total["rows_skipped"]+=res["skipped"]; total["rows_invalid"]+=res["invalid"]
+            total["rows_added"]+=res["added"]; total["rows_updated"]+=res["updated"]; total["rows_skipped"]+=res["skipped"]; total["rows_invalid"]+=res["invalid"]
             total["per_file"].append(res)
         if args.summary_out:
             Path(args.summary_out).write_text(json.dumps({"ok":True, **total}, ensure_ascii=False, indent=2), encoding="utf-8")

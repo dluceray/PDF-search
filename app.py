@@ -236,10 +236,13 @@ def _load_all_rows():
             if k in ["单位名称","单位","甲方","客户名称"]: colmap[c]="单位名称"
             if k in ["签订日期","日期","签署日期"]: colmap[c]="签订日期"
             if k in ["合同额","金额","合同金额"]: colmap[c]="合同额"
+            if k in ["结算值","结算金额"]: colmap[c]="结算值"
+            if k in ["已付款","已支付","已付金额"]: colmap[c]="已付款"
+            if k in ["欠付款","欠付","欠付金额"]: colmap[c]="欠付款"
         if colmap: df = df.rename(columns=colmap)
 
         for _,r in df.iterrows():
-            item={k:str(r.get(k,"")).strip() for k in ["序号","工程地点及内容","单位名称","签订日期","合同额","合同编号"] if k in df.columns}
+            item={k:str(r.get(k,"")).strip() for k in ["序号","工程地点及内容","单位名称","签订日期","合同额","结算值","已付款","欠付款","合同编号"] if k in df.columns}
             item["签订日期_norm"] = _norm_date(item.get("签订日期",""))
 
             base = item.get("序号") or item.get("合同编号","")
