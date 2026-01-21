@@ -20,12 +20,37 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.ref }}
-          fetch-depth: 1
+          fetch-depth: 0
 
       - name: Build deploy package (stable tar)
         run: |
           set -euo pipefail
+          REF_INPUT="${{ github.event.inputs.ref }}"
+          REF="${REF_INPUT:-Tencent}"
+
+          echo "== fetch refs =="
+          git fetch --all --tags
+
+          echo "== checkout ref: $REF =="
+          if git show-ref --verify --quiet "refs/remotes/origin/$REF"; then
+            git checkout -f "$REF"
+            git reset --hard "origin/$REF"
+          elif git show-ref --tags --verify --quiet "refs/tags/$REF"; then
+            git checkout -f "tags/$REF"
+          elif git rev-parse --verify --quiet "$REF"; then
+            git checkout -f "$REF"
+          else
+            echo "WARN: ref '$REF' not found, falling back to 'Tencent'"
+            REF="Tencent"
+            if git show-ref --verify --quiet "refs/remotes/origin/$REF"; then
+              git checkout -f "$REF"
+              git reset --hard "origin/$REF"
+            else
+              echo "ERROR: fallback ref '$REF' not found"
+              exit 1
+            fi
+          fi
+
           echo "== workspace =="
           pwd
           ls -la
@@ -82,6 +107,12 @@ jobs:
             tar --exclude=venv --exclude=.git -czf "/root/pdfsearch_backups/pdfsearch_${TS}.tgz" . || true
 
             tar -xzf /tmp/pdfsearch.tgz -C /root/pdfsearch
+
+            echo "== sync frontend to /www/wwwroot/gfwzb.com =="
+            command -v rsync >/dev/null 2>&1 || (apt-get update -y && apt-get install -y rsync)
+            mkdir -p /www/wwwroot/gfwzb.com
+            rsync -a --delete --exclude=.user.ini /root/pdfsearch/site_frontend/ /www/wwwroot/gfwzb.com/
+            find /www/wwwroot/gfwzb.com -mindepth 1 -name .user.ini -prune -o -exec chmod 755 {} +
 
             echo "== restart service =="
             systemctl restart pdfsearch
