@@ -15,7 +15,7 @@ except Exception:
     pass
 # === probe end ===
 # -*- coding: utf-8 -*-
-import os, sys, glob, time, json, shutil, argparse
+import os, sys, glob, time, json, shutil, argparse, re
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Tuple, Optional
@@ -53,6 +53,22 @@ def canonicalize_header(cell: str):
         if val in aliases:
             return std
     return val
+def is_meaningful_header(name: str) -> bool:
+    val = (name or "").strip()
+    if not val:
+        return False
+    lower = val.lower()
+    if lower in {"nan", "none", "null"}:
+        return False
+    if lower.startswith("unnamed"):
+        return False
+    if re.fullmatch(r"\d+", val):
+        return False
+    if re.fullmatch(r"(列|欄|字段|field|column|col)\s*\d+", val, flags=re.IGNORECASE):
+        return False
+    if re.fullmatch(r"[^\w\u4e00-\u9fff]+", val):
+        return False
+    return True
 def header_map_from_cells(cells: List[str]):
     header_map = {}
     headers = []
@@ -133,7 +149,7 @@ def load_year_sheet(idx_path: Path, headers_needed: List[str]):
                 ws.cell(row=1, column=col, value=key)
                 header_map[key] = col - 1
         for key in headers_needed:
-            if key and key not in header_map:
+            if key and key not in header_map and is_meaningful_header(key):
                 col = ws.max_column + 1
                 ws.cell(row=1, column=col, value=key)
                 header_map[key] = col - 1
@@ -161,7 +177,7 @@ def backup_and_merge(idx_path: Path, rows, headers_needed: List[str]):
     写入策略（覆盖+追加）：
     - 若序号已存在，则按导入值覆盖该行对应列；
     - 若序号不存在，则追加新行；
-    - 若导入包含服务端缺失的列，则自动新增列。
+    - 若导入包含服务端缺失且表头有意义的列，则自动新增列。
     """
     date_dir = idx_path.parent / datetime.now().strftime("%Y%m%d")
     date_dir.mkdir(parents=True, exist_ok=True)
@@ -192,6 +208,8 @@ def backup_and_merge(idx_path: Path, rows, headers_needed: List[str]):
             if not key:
                 continue
             if key not in header_map:
+                if not is_meaningful_header(key):
+                    continue
                 col = ws.max_column + 1
                 ws.cell(row=1, column=col, value=key)
                 header_map[key] = col - 1
