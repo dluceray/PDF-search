@@ -326,9 +326,11 @@ def _load_all_rows():
                 colmap[c]="欠付款"
         if colmap: df = df.rename(columns=colmap)
 
-        for _,r in df.iterrows():
+        for row_idx, (_, r) in enumerate(df.iterrows(), start=2):
             item={k:str(r.get(k,"")).strip() for k in ["序号","工程地点及内容","单位名称","签订日期","合同额","结算值","已付款","欠付款","合同编号"] if k in df.columns}
             item["签订日期_norm"] = _norm_date(item.get("签订日期",""))
+            item["__source_file"] = x
+            item["__row_index"] = row_idx
 
             base = (item.get("序号") or item.get("合同编号","") or "").strip()
             if not base:
@@ -513,6 +515,15 @@ class AutoUpdateToggleIn(BaseModel):
     enabled: bool
     password: Optional[str] = ""
 
+class EntryDetailIn(BaseModel):
+    source_file: str
+    row_index: int
+
+class EntryRemarkIn(BaseModel):
+    source_file: str
+    row_index: int
+    remark: Optional[str] = ""
+
 @app.get("/api/health")
 def health(): return {"ok": True, "ts": int(_utc_now_ts())}
 
@@ -590,10 +601,132 @@ def search(q: QueryIn, x_auth: str = Header(None)):
                 if not all(hits): ok=False
 
         if ok:
-            res.append({k:it.get(k,"") for k in RETURN_FIELDS})
+            item = {k:it.get(k,"") for k in RETURN_FIELDS}
+            item["__source_file"] = it.get("__source_file", "")
+            item["__row_index"] = it.get("__row_index", 0)
+            res.append(item)
 
     off=max(0, int(q.offset or 0)); lim=min(200, max(1, int(q.limit or 50)))
     return {"count": len(res), "count_strict": sum(1 for _it in res if str(_it.get("序号","")).strip()), "items": res[off:off+lim], "offset": off, "limit": lim, "debug": {"kw_date": kw_date, "sample_cur": [(_norm_in_date(it.get("签订日期_norm","") or it.get("签订日期",""))) for it in res[:5]]}}  # DEBUG_DATE_SNIPPET
+
+def _resolve_source_file(source_file: str) -> str:
+    if not source_file:
+        raise HTTPException(status_code=400, detail="Missing source file")
+    real = os.path.realpath(source_file)
+    roots = [os.path.realpath(p) for p in CONFIG.get("roots", []) if p]
+    if roots and not any(real == r or real.startswith(r + os.sep) for r in roots):
+        raise HTTPException(status_code=403, detail="Invalid source file")
+    patterns = [p.lower() for p in CONFIG.get("excel_patterns", []) if p]
+    if patterns and os.path.basename(real).lower() not in patterns:
+        raise HTTPException(status_code=403, detail="Invalid source file")
+    if not os.path.isfile(real):
+        raise HTTPException(status_code=404, detail="Source file not found")
+    return real
+
+def _remark_is_meaningful(value: str) -> bool:
+    if value is None:
+        return False
+    text = str(value).strip()
+    if not text:
+        return False
+    cleaned = re.sub(r"[\\s,，、;；/|]+", "", text)
+    return bool(cleaned)
+
+@app.post("/api/entry/detail", dependencies=[Depends(require_auth)])
+def entry_detail(body: EntryDetailIn):
+    from openpyxl import load_workbook
+
+    real = _resolve_source_file(body.source_file)
+    row_index = int(body.row_index or 0)
+    if row_index < 2:
+        raise HTTPException(status_code=400, detail="Invalid row index")
+
+    wb = load_workbook(real, read_only=True, data_only=True)
+    ws = wb.active
+    if row_index > ws.max_row:
+        raise HTTPException(status_code=404, detail="Row not found")
+
+    headers = []
+    for cell in ws[1]:
+        val = "" if cell.value is None else str(cell.value).strip()
+        headers.append(val)
+
+    row_values = None
+    for row in ws.iter_rows(min_row=row_index, max_row=row_index, values_only=True):
+        row_values = row
+        break
+    if row_values is None:
+        raise HTTPException(status_code=404, detail="Row not found")
+
+    fields = []
+    remark_value = ""
+    has_remark_column = False
+    for idx, header in enumerate(headers):
+        if not header:
+            continue
+        value = ""
+        if idx < len(row_values):
+            raw = row_values[idx]
+            value = "" if raw is None else str(raw).strip()
+        if header == "备注":
+            has_remark_column = True
+            remark_value = value
+            continue
+        fields.append({"label": header, "value": value})
+
+    return {"ok": True, "fields": fields, "remark": remark_value, "has_remark_column": has_remark_column}
+
+@app.post("/api/entry/remark", dependencies=[Depends(require_auth)])
+def entry_remark(body: EntryRemarkIn):
+    from openpyxl import load_workbook
+
+    real = _resolve_source_file(body.source_file)
+    row_index = int(body.row_index or 0)
+    if row_index < 2:
+        raise HTTPException(status_code=400, detail="Invalid row index")
+
+    wb = load_workbook(real)
+    ws = wb.active
+    if row_index > ws.max_row:
+        raise HTTPException(status_code=404, detail="Row not found")
+
+    headers = []
+    for cell in ws[1]:
+        headers.append("" if cell.value is None else str(cell.value).strip())
+
+    remark_idx = None
+    for idx, header in enumerate(headers, start=1):
+        if header == "备注":
+            remark_idx = idx
+            break
+    if remark_idx is None:
+        remark_idx = len(headers) + 1
+        ws.cell(row=1, column=remark_idx, value="备注")
+
+    new_remark = (body.remark or "").strip()
+    if not _remark_is_meaningful(new_remark):
+        return {"ok": True, "updated": False}
+
+    existing_value = ws.cell(row=row_index, column=remark_idx).value
+    existing_remark = "" if existing_value is None else str(existing_value).strip()
+
+    if _remark_is_meaningful(existing_remark):
+        if existing_remark == new_remark:
+            return {"ok": True, "updated": False}
+        if new_remark in existing_remark:
+            return {"ok": True, "updated": False}
+        combined = f"{existing_remark},{new_remark}"
+        ws.cell(row=row_index, column=remark_idx, value=combined)
+    else:
+        ws.cell(row=row_index, column=remark_idx, value=new_remark)
+
+    wb.save(real)
+
+    with _ROWS_LOCK:
+        _ROWS_CACHE["sig"] = None
+        _ROWS_CACHE["rows"] = []
+
+    return {"ok": True}
 
 @app.get("/api/auto-update/status", dependencies=[Depends(require_auth)])
 def auto_update_status():
