@@ -298,6 +298,7 @@ def _load_all_rows():
             return list(_ROWS_CACHE.get("rows", []))
 
     rows=[]
+    rows_by_key={}
     for x in files:
         scan_root = os.path.dirname(x)
         try:
@@ -352,6 +353,16 @@ def _load_all_rows():
                         item["pdf_dl"]   = down + rel + qs
                 except Exception:
                     pass
+            dedup_key = base
+            existing_idx = rows_by_key.get(dedup_key)
+            if existing_idx is not None:
+                existing = rows[existing_idx]
+                if existing.get("pdf_path") and not item.get("pdf_path"):
+                    continue
+                if item.get("pdf_path") and not existing.get("pdf_path"):
+                    rows[existing_idx] = item
+                continue
+            rows_by_key[dedup_key] = len(rows)
             rows.append(item)
 
     with _ROWS_LOCK:
