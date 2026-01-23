@@ -73,6 +73,14 @@ small.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospa
 .toast{position:fixed;right:16px;bottom:16px;background:#fff;border:1px solid var(--line);padding:10px 12px;border-radius:12px;box-shadow:var(--shadow);opacity:0;transform:translateY(8px);transition:.2s}
 .toast.show{opacity:1;transform:translateY(0)}
 .spinner{width:16px;height:16px;border-radius:999px;border:2px solid #e5e5ea;border-top-color:var(--accent);animation:spin 1s linear infinite}
+.auto-update{display:inline-flex;align-items:center;gap:8px;margin-left:10px;font-size:12px;color:#3c3c43}
+.auto-update .switch{position:relative;display:inline-block;width:38px;height:22px}
+.auto-update .switch input{opacity:0;width:0;height:0}
+.auto-update .slider{position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:#cbd5e1;transition:.2s;border-radius:999px}
+.auto-update .slider:before{position:absolute;content:"";height:18px;width:18px;left:2px;top:2px;background:white;transition:.2s;border-radius:50%;box-shadow:0 1px 3px rgba(0,0,0,.2)}
+.auto-update .switch input:checked + .slider{background:#4ade80}
+.auto-update .switch input:checked + .slider:before{transform:translateX(16px)}
+.auto-update-label{white-space:nowrap}
 @keyframes spin{to{transform:rotate(360deg)}}
 </style>
 
@@ -165,7 +173,17 @@ small.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospa
       <div>
         <div class="h1">合同检索</div>
       </div>
-      <div class="kv"><div class="spinner" id="spin" style="display:none"></div><span id="state" class="badge"><span class="dot" id="d"></span> 未登录</span></div>
+      <div class="kv">
+        <div class="spinner" id="spin" style="display:none"></div>
+        <span id="state" class="badge"><span class="dot" id="d"></span> 未登录</span>
+        <div class="auto-update" id="autoUpdateWrap" style="display:none">
+          <label class="switch" title="自动更新">
+            <input type="checkbox" id="autoUpdateToggle" />
+            <span class="slider"></span>
+          </label>
+          <span class="auto-update-label">自动更新</span>
+        </div>
+      </div>
     </div>
 
     <div class="grid">
@@ -259,6 +277,21 @@ $("#state").innerHTML = (ok?'<span class="dot ok"></span> 已登录':'<span clas
   $("#loginCard").style.display = ok ? "none" : "block";
   $("#searchCard").style.display = ok ? "block" : "none";
   $("#tableWrap").style.display = ok ? "block" : "none";
+  const autoWrap = $("#autoUpdateWrap");
+  if (autoWrap) autoWrap.style.display = ok ? "inline-flex" : "none";
+  if (ok) {
+    fetchAutoUpdateStatus();
+  }
+}
+async function fetchAutoUpdateStatus(){
+  if (!TOKEN) return;
+  try{
+    const r = await fetch('/api/auto-update/status',{headers:{'X-Auth': TOKEN}});
+    if(r.status===401){ localStorage.removeItem('X_AUTH'); TOKEN=''; setLoginUI(false); toast("登录失效，请重新登录"); return; }
+    const j = await r.json();
+    const el = $("#autoUpdateToggle");
+    if (el) el.checked = !!j.enabled;
+  }catch(e){ /* ignore */ }
 }
 function getCellValue(row, key){
   if (!row || row[key] == null) return "";
@@ -303,6 +336,34 @@ async function doLogin(pwd){
 $("#btnLogin").onclick=()=>doLogin($("#pwd").value.trim());
 $("#btnLogout").onclick=()=>{ localStorage.removeItem('X_AUTH'); TOKEN=''; setLoginUI(false); toast("已退出"); };
 if(TOKEN){ setLoginUI(true); }
+
+const autoToggle = $("#autoUpdateToggle");
+if (autoToggle) {
+  autoToggle.addEventListener('change', async function(){
+    const desired = autoToggle.checked;
+    const pwd = (prompt('请输入口令') || '').trim();
+    if (!pwd) {
+      autoToggle.checked = !desired;
+      toast('已取消');
+      return;
+    }
+    try{
+      const r = await fetch('/api/auto-update/toggle',{
+        method:'POST',
+        headers:{'Content-Type':'application/json','X-Auth': TOKEN},
+        body: JSON.stringify({enabled: desired, password: pwd})
+      });
+      if(r.status===401){ localStorage.removeItem('X_AUTH'); TOKEN=''; setLoginUI(false); toast("登录失效，请重新登录"); return; }
+      if(!r.ok){ autoToggle.checked = !desired; toast('口令错误或切换失败'); return; }
+      const j = await r.json().catch(()=>({}));
+      autoToggle.checked = !!j.enabled;
+      toast(j.enabled ? '自动更新已开启' : '自动更新已关闭');
+    }catch(e){
+      autoToggle.checked = !desired;
+      toast('切换失败');
+    }
+  });
+}
 
 $("#go").onclick = async ()=>{
 // PATCH: new-search reset
