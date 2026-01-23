@@ -101,8 +101,9 @@ a.link{color:var(--accent);text-decoration:none}a.link:hover{text-decoration:und
 .detail-remark textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(0,122,255,.12)}
 .detail-footer{
   padding:12px 20px;border-top:1px solid #eef2f7;background:#fff;display:flex;justify-content:flex-end;gap:8px;
-  position:sticky;bottom:0;
+  position:sticky;bottom:0;align-items:center;
 }
+.detail-footer .detail-pdf-actions{margin-right:auto}
 .note{color:#8e8e93;font-size:12px;margin-top:6px}
 small.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;color:#6b7280}
 .toast{position:fixed;right:16px;bottom:16px;background:#fff;border:1px solid var(--line);padding:10px 12px;border-radius:12px;box-shadow:var(--shadow);opacity:0;transform:translateY(8px);transition:.2s}
@@ -305,6 +306,10 @@ small.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospa
         </div>
       </div>
       <div class="detail-footer">
+        <div class="action-bar detail-pdf-actions">
+          <a class="btn-open" id="detailOpen" href="#" target="_blank" rel="noopener"><span class="ico">↗</span>打开</a>
+          <a class="btn-download" id="detailDownload" href="#" target="_blank" rel="noopener" download><span class="ico">⬇</span>下载</a>
+        </div>
         <button class="btn primary" id="detailSave">保存</button>
         <button class="btn" id="detailClose">关闭</button>
       </div>
@@ -359,6 +364,8 @@ const detailRemark = $("#detailRemark");
 const detailSaveBtn = $("#detailSave");
 const detailCloseBtn = $("#detailClose");
 const detailSubtitle = $("#detailSubtitle");
+const detailOpenBtn = $("#detailOpen");
+const detailDownloadBtn = $("#detailDownload");
 let detailContext = null;
 
 function openDetailModal(){
@@ -373,6 +380,29 @@ function closeDetailModal(){
   detailBackdrop.setAttribute("aria-hidden", "true");
   document.body.style.overflow = "";
   detailContext = null;
+}
+function updateDetailPdfLinks(context){
+  const pdfPath = context && context.pdf_path ? String(context.pdf_path) : "";
+  const pdfDl = context && context.pdf_dl ? String(context.pdf_dl) : "";
+
+  if (detailOpenBtn) {
+    if (pdfPath) {
+      detailOpenBtn.href = pdfPath;
+      detailOpenBtn.hidden = false;
+    } else {
+      detailOpenBtn.removeAttribute("href");
+      detailOpenBtn.hidden = true;
+    }
+  }
+  if (detailDownloadBtn) {
+    if (pdfDl) {
+      detailDownloadBtn.href = pdfDl;
+      detailDownloadBtn.hidden = false;
+    } else {
+      detailDownloadBtn.removeAttribute("href");
+      detailDownloadBtn.hidden = true;
+    }
+  }
 }
 function renderDetailFields(fields){
   if (!detailGrid) return;
@@ -398,16 +428,17 @@ function renderDetailFields(fields){
     detailGrid.appendChild(item);
   });
 }
-async function loadDetailModal(sourceFile, rowIndex, subtitle){
+async function loadDetailModal(sourceFile, rowIndex, subtitle, pdfPath, pdfDl){
   if (!sourceFile || !rowIndex) {
     toast("缺少详情信息");
     return;
   }
-  detailContext = { sourceFile, rowIndex };
+  detailContext = { sourceFile, rowIndex, pdf_path: pdfPath || "", pdf_dl: pdfDl || "" };
   if (detailSubtitle) detailSubtitle.textContent = subtitle ? `序号：${subtitle}` : "";
   if (detailRemark) detailRemark.value = "";
   if (detailRemark) detailRemark.placeholder = "填写备注...";
   renderDetailFields([]);
+  updateDetailPdfLinks(detailContext);
   openDetailModal();
   try{
     const r = await fetch('/api/entry/detail', {
@@ -596,7 +627,7 @@ busy(true);
      </div>`
   : `<span class="sub">无</span>`;
       const detailAction = (x.__source_file && x.__row_index)
-        ? `<button class="detail-btn" data-source="${escapeAttr(x.__source_file)}" data-row="${escapeAttr(x.__row_index)}" data-index="${escapeAttr(indexValue)}">详情</button>`
+        ? `<button class="detail-btn" data-source="${escapeAttr(x.__source_file)}" data-row="${escapeAttr(x.__row_index)}" data-index="${escapeAttr(indexValue)}" data-pdf="${escapeAttr(x.pdf_path || "")}" data-pdfdl="${escapeAttr(x.pdf_dl || "")}">详情</button>`
         : `<span class="sub">无</span>`;
       tr.innerHTML=`
         <td class="col-index">${indexValue}</td>
@@ -622,7 +653,9 @@ if (tbody) {
     const sourceFile = btn.getAttribute("data-source") || "";
     const rowIndex = btn.getAttribute("data-row") || "";
     const subtitle = btn.getAttribute("data-index") || "";
-    loadDetailModal(sourceFile, rowIndex, subtitle);
+    const pdfPath = btn.getAttribute("data-pdf") || "";
+    const pdfDl = btn.getAttribute("data-pdfdl") || "";
+    loadDetailModal(sourceFile, rowIndex, subtitle, pdfPath, pdfDl);
   });
 }
 </script>
