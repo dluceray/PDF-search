@@ -1,4 +1,6 @@
 import threading
+import time
+import shutil
 from fastapi import Cookie
 from fastapi import Form
 from fastapi.responses import RedirectResponse
@@ -41,6 +43,13 @@ PASSWORD_FALLBACK = "1982567"
 PASSWORDS_FILE = os.path.join(os.path.dirname(__file__), "DATA", "passwords.txt")
 TOKENS: Dict[str, float] = {}
 
+APP_DIR = os.path.dirname(__file__)
+
+AUTO_UPDATE_LOCK = threading.Lock()
+AUTO_UPDATE_ENABLED = False
+PENDING_DIR = "/www/wwwroot/dav.gfwzb.com/data"
+ADD_PENDING_DIR = "/data/add_pending"
+
 def _load_passwords() -> set[str]:
     try:
         with open(PASSWORDS_FILE, "r", encoding="utf-8") as f:
@@ -52,6 +61,73 @@ def _load_passwords() -> set[str]:
 
 def _password_valid(password: str) -> bool:
     return str(password) in _load_passwords()
+
+def _resolve_data_dir() -> str:
+    lower = os.path.join(APP_DIR, "data")
+    upper = os.path.join(APP_DIR, "DATA")
+    if os.path.isdir(lower):
+        return lower
+    return upper
+
+def _auto_update_log(message: str) -> None:
+    data_dir = _resolve_data_dir()
+    os.makedirs(data_dir, exist_ok=True)
+    log_path = os.path.join(data_dir, "auto_update.log")
+    ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    line = f"[{ts}] {message}\n"
+    with open(log_path, "a", encoding="utf-8") as f:
+        f.write(line)
+
+def _load_auto_update_enabled() -> bool:
+    data_dir = _resolve_data_dir()
+    path = os.path.join(data_dir, "auto_update.json")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+            return bool(payload.get("enabled", False))
+    except FileNotFoundError:
+        return False
+    except Exception:
+        return False
+
+def _save_auto_update_enabled(enabled: bool) -> None:
+    data_dir = _resolve_data_dir()
+    os.makedirs(data_dir, exist_ok=True)
+    path = os.path.join(data_dir, "auto_update.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"enabled": bool(enabled)}, f, ensure_ascii=False, indent=2)
+
+def _load_run_state() -> Dict[str, str]:
+    data_dir = _resolve_data_dir()
+    path = os.path.join(data_dir, "auto_update_runs.json")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return {
+                "copy_date": data.get("copy_date", ""),
+                "update_date": data.get("update_date", ""),
+            }
+    except FileNotFoundError:
+        return {"copy_date": "", "update_date": ""}
+    except Exception:
+        return {"copy_date": "", "update_date": ""}
+
+def _save_run_state(state: Dict[str, str]) -> None:
+    data_dir = _resolve_data_dir()
+    os.makedirs(data_dir, exist_ok=True)
+    path = os.path.join(data_dir, "auto_update_runs.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(state, f, ensure_ascii=False, indent=2)
+
+def _set_auto_update_enabled(enabled: bool) -> None:
+    global AUTO_UPDATE_ENABLED
+    with AUTO_UPDATE_LOCK:
+        AUTO_UPDATE_ENABLED = bool(enabled)
+        _save_auto_update_enabled(AUTO_UPDATE_ENABLED)
+
+def _get_auto_update_enabled() -> bool:
+    with AUTO_UPDATE_LOCK:
+        return bool(AUTO_UPDATE_ENABLED)
 
 # 轻量 rows 缓存（按 Excel 列表+mtime 签名）
 _ROWS_CACHE = {"sig": None, "rows": []}
@@ -283,6 +359,119 @@ def _load_all_rows():
         _ROWS_CACHE["rows"] = list(rows)
     return rows
 
+def _pending_snapshot_path() -> str:
+    data_dir = _resolve_data_dir()
+    return os.path.join(data_dir, "pending_snapshot.json")
+
+def _load_pending_snapshot() -> Dict[str, Dict[str, int]]:
+    path = _pending_snapshot_path()
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            return data
+    except FileNotFoundError:
+        return {}
+    except Exception:
+        return {}
+    return {}
+
+def _save_pending_snapshot(snapshot: Dict[str, Dict[str, int]]) -> None:
+    path = _pending_snapshot_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(snapshot, f, ensure_ascii=False, indent=2)
+
+def _scan_pending_files(pending_dir: str) -> Dict[str, Dict[str, int]]:
+    snapshot: Dict[str, Dict[str, int]] = {}
+    try:
+        for name in os.listdir(pending_dir):
+            path = os.path.join(pending_dir, name)
+            if not os.path.isfile(path):
+                continue
+            try:
+                st = os.stat(path)
+            except Exception:
+                continue
+            snapshot[name] = {
+                "mtime_ns": int(getattr(st, "st_mtime_ns", int(st.st_mtime * 1e9))),
+                "size": int(st.st_size),
+            }
+    except FileNotFoundError:
+        return {}
+    return snapshot
+
+def _copy_pending_changes() -> None:
+    pending_dir = PENDING_DIR
+    target_dir = ADD_PENDING_DIR
+    if not os.path.isdir(pending_dir):
+        _auto_update_log(f"pending 目录不存在: {pending_dir}")
+        return
+    os.makedirs(target_dir, exist_ok=True)
+
+    previous = _load_pending_snapshot()
+    current = _scan_pending_files(pending_dir)
+    changed = []
+    for name, meta in current.items():
+        prev = previous.get(name)
+        if not prev or prev.get("mtime_ns") != meta.get("mtime_ns") or prev.get("size") != meta.get("size"):
+            changed.append(name)
+
+    if not changed:
+        _auto_update_log("pending 无新增或变更文件")
+        _save_pending_snapshot(current)
+        return
+
+    for name in changed:
+        src = os.path.join(pending_dir, name)
+        dest = os.path.join(target_dir, name)
+        try:
+            shutil.copy2(src, dest)
+            _auto_update_log(f"复制完成: {src} -> {dest}")
+        except Exception as exc:
+            _auto_update_log(f"复制失败: {src} -> {dest} ({exc})")
+
+    _save_pending_snapshot(current)
+
+def _run_update_script() -> None:
+    try:
+        proc = subprocess.run(
+            ["/root/pdfsearch/bin/update_all.sh"],
+            capture_output=True,
+            text=True,
+            timeout=1200,
+        )
+        _auto_update_log(f"更新脚本完成: code={proc.returncode}")
+        if proc.stdout:
+            _auto_update_log(f"stdout: {proc.stdout.strip()}")
+        if proc.stderr:
+            _auto_update_log(f"stderr: {proc.stderr.strip()}")
+    except Exception as exc:
+        _auto_update_log(f"更新脚本失败: {exc}")
+
+def _auto_update_loop() -> None:
+    while True:
+        try:
+            if _get_auto_update_enabled():
+                now = datetime.datetime.now()
+                today = now.strftime("%Y-%m-%d")
+                state = _load_run_state()
+
+                if now.hour == 23 and now.minute >= 0 and state.get("copy_date") != today:
+                    _auto_update_log("开始检查 pending 目录变更")
+                    _copy_pending_changes()
+                    state["copy_date"] = today
+                    _save_run_state(state)
+
+                if now.hour == 23 and now.minute >= 30 and state.get("update_date") != today:
+                    _auto_update_log("开始执行程序更新")
+                    _run_update_script()
+                    state["update_date"] = today
+                    _save_run_state(state)
+        except Exception as exc:
+            _auto_update_log(f"自动更新任务异常: {exc}")
+        time.sleep(30)
+
 class QueryIn(BaseModel):
     工程地点及内容: Optional[str]=""
     单位名称: Optional[str]=""
@@ -308,6 +497,10 @@ class ReloadIn(BaseModel):
     amount_numeric_equivalence: Optional[bool] = None
     amount_zero_means_empty: Optional[bool] = None
     text_logic_or: Optional[bool] = None
+
+class AutoUpdateToggleIn(BaseModel):
+    enabled: bool
+    password: Optional[str] = ""
 
 @app.get("/api/health")
 def health(): return {"ok": True, "ts": int(_utc_now_ts())}
@@ -390,6 +583,19 @@ def search(q: QueryIn, x_auth: str = Header(None)):
 
     off=max(0, int(q.offset or 0)); lim=min(200, max(1, int(q.limit or 50)))
     return {"count": len(res), "count_strict": sum(1 for _it in res if str(_it.get("序号","")).strip()), "items": res[off:off+lim], "offset": off, "limit": lim, "debug": {"kw_date": kw_date, "sample_cur": [(_norm_in_date(it.get("签订日期_norm","") or it.get("签订日期",""))) for it in res[:5]]}}  # DEBUG_DATE_SNIPPET
+
+@app.get("/api/auto-update/status", dependencies=[Depends(require_auth)])
+def auto_update_status():
+    return {"enabled": _get_auto_update_enabled()}
+
+@app.post("/api/auto-update/toggle", dependencies=[Depends(require_auth)])
+def auto_update_toggle(body: AutoUpdateToggleIn):
+    pw = (body.password or "").strip().lower()
+    if pw != "shigeba":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    _set_auto_update_enabled(body.enabled)
+    _auto_update_log(f"自动更新开关切换为: {'开启' if body.enabled else '关闭'}")
+    return {"ok": True, "enabled": _get_auto_update_enabled()}
 
 # == injected helpers ==
 
@@ -597,3 +803,7 @@ def do_login(password: str = Form(...)):
     resp = RedirectResponse(url="/", status_code=302)
     resp.set_cookie("X-Auth", t, httponly=True, samesite="lax", max_age=24*3600)
     return resp
+
+
+AUTO_UPDATE_ENABLED = _load_auto_update_enabled()
+threading.Thread(target=_auto_update_loop, daemon=True).start()
