@@ -196,6 +196,7 @@ def backup_and_merge(idx_path: Path, rows, headers_needed: List[str]):
     if bak.exists():
         bak = date_dir / f"{idx_path.stem}.{ts()}{idx_path.suffix}"
     tmp = idx_path.with_suffix(".tmp.xlsx")
+    _log(f"backup_and_merge start index={idx_path} rows={len(rows)} headers_needed={headers_needed}")
     shutil.copy2(idx_path, bak)
 
     ok, wb, ws, header_map, seq_map, why = load_year_sheet(idx_path, headers_needed)
@@ -228,6 +229,7 @@ def backup_and_merge(idx_path: Path, rows, headers_needed: List[str]):
 
     wb.save(tmp)
     os.replace(tmp, idx_path)
+    _log(f"backup_and_merge done index={idx_path} backup={bak} added={added} updated={updated}")
     return bak.name, added, updated
 def detect_header_row(values_rows, mode:str):
     rows=[normalize_header_cells(r) for r in values_rows[:5]]
@@ -385,12 +387,19 @@ def process_file(xlsx: Path, root: Path, header_mode: str):
             import time as _t; _t.sleep(0.1); waited+=0.1
             if waited>5.0: return {"file": xlsx.name, "__file_failed__": True, "reason": f"年索引被锁:{idx_path.name}"}
         try:
+            _log(f"process_file file={xlsx} year={year} acquiring_lock waited={waited:.1f}s")
             lock.touch()
+            start_ts = time.time()
+            _log(f"process_file file={xlsx} year={year} merge_start rows={len(rows2)}")
             bak, added, updated = backup_and_merge(idx_path, rows2, headers_seen)
+            _log(f"process_file file={xlsx} year={year} merge_done elapsed={time.time()-start_ts:.2f}s")
             res["details"].append({"year":year,"status":"wrote","rows":len(rows2),"backup":bak})
             res["added"] += added
             res["updated"] += updated
             _log(f"process_file file={xlsx} year={year} added={added} updated={updated} backup={bak}")
+        except Exception as exc:
+            _log(f"process_file file={xlsx} year={year} merge_failed error={exc!r}")
+            raise
         finally:
             try: lock.unlink(missing_ok=True)
             except: pass
