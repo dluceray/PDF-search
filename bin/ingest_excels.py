@@ -41,10 +41,21 @@ HEADER_ALIASES = {
 
 def ts(): return datetime.now().strftime("%Y%m%d%H%M%S")
 def header_equal(a,b): return len(a)==len(b) and all((a[i]==b[i]) for i in range(len(a)))
+def _ingest_log_path() -> Path:
+    return Path("/tmp/ingest_excels.log")
+def _log(msg: str) -> None:
+    try:
+        _ingest_log_path().parent.mkdir(parents=True, exist_ok=True)
+        with _ingest_log_path().open("a", encoding="utf-8") as f:
+            f.write(f"[{datetime.now().strftime('%F %T')}] {msg}\n")
+    except Exception:
+        pass
 def normalize_header_cells(row):
     vals=[ ("" if v is None else str(v).strip()) for v in row ]
     while vals and vals[-1]=="": vals.pop()
     return vals
+def row_has_data(row) -> bool:
+    return any((v is not None and str(v).strip() != "") for v in row)
 def canonicalize_header(cell: str):
     val = (cell or "").strip()
     if not val:
@@ -185,11 +196,23 @@ def backup_and_merge(idx_path: Path, rows, headers_needed: List[str]):
     if bak.exists():
         bak = date_dir / f"{idx_path.stem}.{ts()}{idx_path.suffix}"
     tmp = idx_path.with_suffix(".tmp.xlsx")
+    _log(f"backup_and_merge start index={idx_path} rows={len(rows)} headers_needed={headers_needed}")
     shutil.copy2(idx_path, bak)
 
     ok, wb, ws, header_map, seq_map, why = load_year_sheet(idx_path, headers_needed)
     if not ok:
         raise ValueError(why)
+    merged_cell_map = {}
+    try:
+        for cell_range in ws.merged_cells.ranges:
+            min_row, min_col, max_row, max_col = cell_range.min_row, cell_range.min_col, cell_range.max_row, cell_range.max_col
+            for row in range(min_row, max_row + 1):
+                for col in range(min_col, max_col + 1):
+                    if row == min_row and col == min_col:
+                        continue
+                    merged_cell_map[(row, col)] = (min_row, min_col)
+    except Exception:
+        merged_cell_map = {}
 
     added = 0
     updated = 0
@@ -213,10 +236,16 @@ def backup_and_merge(idx_path: Path, rows, headers_needed: List[str]):
                 col = ws.max_column + 1
                 ws.cell(row=1, column=col, value=key)
                 header_map[key] = col - 1
-            ws.cell(row=row_idx, column=header_map[key] + 1, value=val)
+            col_idx = header_map[key] + 1
+            write_row, write_col = row_idx, col_idx
+            target = merged_cell_map.get((write_row, write_col))
+            if target:
+                write_row, write_col = target
+            ws.cell(row=write_row, column=write_col, value=val)
 
     wb.save(tmp)
     os.replace(tmp, idx_path)
+    _log(f"backup_and_merge done index={idx_path} backup={bak} added={added} updated={updated}")
     return bak.name, added, updated
 def detect_header_row(values_rows, mode:str):
     rows=[normalize_header_cells(r) for r in values_rows[:5]]
@@ -263,67 +292,93 @@ def load_pending_rows(xlsx_path: Path, header_mode: str):
     rows_out = []
     headers_seen = []
     try:
+        _log(f"load_pending_rows start file={xlsx_path} ext={ext} header_mode={header_mode}")
         if ext == ".xlsx":
             from openpyxl import load_workbook
             wb = load_workbook(xlsx_path, data_only=True, read_only=True)
+            _log(f"openpyxl loaded sheets={len(wb.worksheets)} names={[ws.title for ws in wb.worksheets]}")
             for ws in wb.worksheets:
                 if is_summary_sheet_name(ws.title):
+                    _log(f"skip summary sheet={ws.title}")
                     continue
                 values_rows = [ (list(r) if r else []) for r in ws.iter_rows(min_row=1, values_only=True) ]
                 if not any(any((v is not None and str(v).strip() != "") for v in row) for row in values_rows):
+                    _log(f"skip empty sheet={ws.title}")
                     continue
                 ok, hdr_idx, why, hdr_cells, header_map = detect_header_row(values_rows, header_mode)
                 if not ok:
+                    _log(f"sheet={ws.title} header_detect_failed reason={why} first_rows={values_rows[:3]}")
                     errors.append(f"{ws.title}: {why}")
                     continue
+                _log(f"sheet={ws.title} header_row_index={hdr_idx} header={hdr_cells}")
                 for h in hdr_cells:
                     if h and h not in headers_seen:
                         headers_seen.append(h)
+                added_rows = 0
                 for r in values_rows[hdr_idx+1:]:
                     r = list(r) if isinstance(r, (list, tuple)) else [r]
+                    if not row_has_data(r):
+                        continue
                     row = {}
                     for key, ci in header_map.items():
                         row[key] = r[ci] if ci < len(r) else ""
                     rows_out.append(row)
+                    added_rows += 1
+                _log(f"sheet={ws.title} rows_added={added_rows}")
         elif ext == ".xls":
             try:
                 import xlrd  # 1.2.0
             except Exception:
+                _log("xls missing xlrd==1.2.0")
                 return False, "处理 .xls 需要安装 xlrd==1.2.0", [], []
             book = xlrd.open_workbook(xlsx_path, formatting_info=False)
+            _log(f"xlrd loaded sheets={book.nsheets} names={[book.sheet_by_index(i).name for i in range(book.nsheets)]}")
             for si in range(book.nsheets):
                 sh = book.sheet_by_index(si)
                 if is_summary_sheet_name(sh.name):
+                    _log(f"skip summary sheet={sh.name}")
                     continue
                 values_rows = [[sh.cell_value(i,j) for j in range(sh.ncols)] for i in range(sh.nrows)]
                 if not any(any((v is not None and str(v).strip() != "") for v in row) for row in values_rows):
+                    _log(f"skip empty sheet={sh.name}")
                     continue
                 ok, hdr_idx, why, hdr_cells, header_map = detect_header_row(values_rows, header_mode)
                 if not ok:
+                    _log(f"sheet={sh.name} header_detect_failed reason={why} first_rows={values_rows[:3]}")
                     errors.append(f"{sh.name}: {why}")
                     continue
+                _log(f"sheet={sh.name} header_row_index={hdr_idx} header={hdr_cells}")
                 for h in hdr_cells:
                     if h and h not in headers_seen:
                         headers_seen.append(h)
+                added_rows = 0
                 for r in values_rows[hdr_idx+1:]:
                     r = list(r) if isinstance(r, (list, tuple)) else [r]
+                    if not row_has_data(r):
+                        continue
                     row = {}
                     for key, ci in header_map.items():
                         row[key] = r[ci] if ci < len(r) else ""
                     rows_out.append(row)
+                    added_rows += 1
+                _log(f"sheet={sh.name} rows_added={added_rows}")
         else:
             return False, "不支持的扩展名（仅 .xlsx/.xls）", [], []
     except Exception as e:
+        _log(f"load_pending_rows exception={e!r}")
         return False, f"无法读取Excel: {e}", [], []
 
     if errors:
+        _log(f"load_pending_rows failed errors={errors}")
         return False, "以下工作表不符合要求（全部中止处理）：" + "; ".join(errors), [], []
+    _log(f"load_pending_rows done file={xlsx_path} rows_out={len(rows_out)} headers_seen={headers_seen}")
     return True, "", rows_out, headers_seen
 
 
 def process_file(xlsx: Path, root: Path, header_mode: str):
     res={"file": xlsx.name, "added":0, "updated":0, "skipped":0, "invalid":0, "details":[]}
     ok, why, rows, headers_seen = load_pending_rows(xlsx, header_mode)
+    _log(f"process_file file={xlsx} ok={ok} rows={len(rows)} headers_seen={headers_seen}")
     if not ok: return {"file": xlsx.name, "__file_failed__": True, "reason": why}
     buckets: Dict[int, List[Dict]] = {}
     for r in rows:
@@ -341,17 +396,26 @@ def process_file(xlsx: Path, root: Path, header_mode: str):
             res["invalid"] += len(rows2)
             res["details"].append({"year": year, "status":"invalid", "reason":"缺少index.xlsx模板"})
             continue
+        _log(f"process_file file={xlsx} year={year} rows={len(rows2)} index={idx_path}")
         lock = idx_path.with_name(idx_path.name + ".lock")
         waited=0.0
         while lock.exists():
             import time as _t; _t.sleep(0.1); waited+=0.1
             if waited>5.0: return {"file": xlsx.name, "__file_failed__": True, "reason": f"年索引被锁:{idx_path.name}"}
         try:
+            _log(f"process_file file={xlsx} year={year} acquiring_lock waited={waited:.1f}s")
             lock.touch()
+            start_ts = time.time()
+            _log(f"process_file file={xlsx} year={year} merge_start rows={len(rows2)}")
             bak, added, updated = backup_and_merge(idx_path, rows2, headers_seen)
+            _log(f"process_file file={xlsx} year={year} merge_done elapsed={time.time()-start_ts:.2f}s")
             res["details"].append({"year":year,"status":"wrote","rows":len(rows2),"backup":bak})
             res["added"] += added
             res["updated"] += updated
+            _log(f"process_file file={xlsx} year={year} added={added} updated={updated} backup={bak}")
+        except Exception as exc:
+            _log(f"process_file file={xlsx} year={year} merge_failed error={exc!r}")
+            raise
         finally:
             try: lock.unlink(missing_ok=True)
             except: pass
@@ -368,6 +432,7 @@ def main():
     ap.add_argument("--header-row", default="2", choices=["1","2","auto"], help="待处理 Excel 的表头所在行（1-based），默认 2")
     args=ap.parse_args()
     root=Path(args.contracts_root); pending=Path(args.pending_dir); done=Path(args.done_dir); error=Path(args.error_dir)
+    _log(f"ingest start contracts_root={root} pending={pending} done={done} error={error} header_row={args.header_row}")
     if os.path.exists(args.lock_file):
         try:
             raw = Path(args.lock_file).read_text(encoding="utf-8").strip()
