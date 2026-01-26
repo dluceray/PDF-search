@@ -368,8 +368,27 @@ def main():
     ap.add_argument("--header-row", default="2", choices=["1","2","auto"], help="待处理 Excel 的表头所在行（1-based），默认 2")
     args=ap.parse_args()
     root=Path(args.contracts_root); pending=Path(args.pending_dir); done=Path(args.done_dir); error=Path(args.error_dir)
+    if os.path.exists(args.lock_file):
+        try:
+            raw = Path(args.lock_file).read_text(encoding="utf-8").strip()
+            pid = int(raw) if raw else None
+        except Exception:
+            pid = None
+        if pid:
+            try:
+                os.kill(pid, 0)
+                print(json.dumps({"ok": False, "error": "another ingest running"}, ensure_ascii=False))
+                sys.exit(1)
+            except OSError:
+                pass
+        try:
+            os.unlink(args.lock_file)
+        except Exception:
+            pass
     try:
-        fd=os.open(args.lock_file, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644); os.close(fd)
+        fd=os.open(args.lock_file, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(str(os.getpid()))
     except FileExistsError:
         print(json.dumps({"ok": False, "error": "another ingest running"}, ensure_ascii=False)); sys.exit(1)
     try:
