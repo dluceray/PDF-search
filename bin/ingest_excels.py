@@ -181,15 +181,17 @@ def load_year_sheet(idx_path: Path, headers_needed: List[str]):
         from openpyxl import load_workbook
         wb=load_workbook(idx_path); ws=wb.active
         hdr=[ ("" if c.value is None else str(c.value).strip()) for c in ws[1] ]
-        canonical_headers = [canonicalize_header(h) for h in normalize_header_cells(hdr)]
+        trimmed_headers = normalize_header_cells(hdr)
+        canonical_headers = [canonicalize_header(h) for h in trimmed_headers]
         header_map, _headers = header_map_from_cells(canonical_headers)
         desired_headers = []
-        for key in STD_HEADER:
-            if key not in desired_headers:
-                desired_headers.append(key)
+        seq_name = canonicalize_header("序号")
+        if seq_name:
+            desired_headers.append(seq_name)
         for key in headers_needed:
-            if key and is_meaningful_header(key) and key not in desired_headers:
-                desired_headers.append(key)
+            name = canonicalize_header(key)
+            if name and is_meaningful_header(name) and name not in desired_headers:
+                desired_headers.append(name)
         for key in canonical_headers:
             if key and is_meaningful_header(key) and key not in desired_headers:
                 desired_headers.append(key)
@@ -197,13 +199,17 @@ def load_year_sheet(idx_path: Path, headers_needed: List[str]):
             old_index = {name: i for i, name in enumerate(canonical_headers) if name}
             max_row = ws.max_row
             for row_idx in range(1, max_row + 1):
-                old_values = [cell.value for cell in ws[row_idx]]
-                new_values = []
-                for name in desired_headers:
-                    idx = old_index.get(name)
-                    new_values.append(old_values[idx] if idx is not None and idx < len(old_values) else None)
+                if row_idx == 1:
+                    new_values = list(desired_headers)
+                else:
+                    old_values = [cell.value for cell in ws[row_idx]]
+                    new_values = []
+                    for name in desired_headers:
+                        idx = old_index.get(name)
+                        new_values.append(old_values[idx] if idx is not None and idx < len(old_values) else None)
                 for col_idx, value in enumerate(new_values, start=1):
-                    ws.cell(row=row_idx, column=col_idx, value=value)
+                    cell = ws.cell(row=row_idx, column=col_idx)
+                    cell.value = value
             if ws.max_column > len(desired_headers):
                 ws.delete_cols(len(desired_headers) + 1, ws.max_column - len(desired_headers))
         header_map, _headers = header_map_from_cells(desired_headers)
