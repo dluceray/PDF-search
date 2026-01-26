@@ -89,6 +89,21 @@ def header_map_from_cells(cells: List[str]):
         if name and name not in header_map:
             header_map[name] = i
     return header_map, headers
+def headers_present_in_rows(rows: List[Dict], headers_seen: List[str]) -> List[str]:
+    present = set()
+    for row in rows:
+        for key in row.keys():
+            if not key or not is_meaningful_header(key):
+                continue
+            present.add(key)
+    ordered = []
+    for name in headers_seen:
+        if name in present and name not in ordered:
+            ordered.append(name)
+    for name in present:
+        if name not in ordered:
+            ordered.append(name)
+    return ordered
 def match_header(row):
     cells = normalize_header_cells(row)
     header_map, headers = header_map_from_cells(cells)
@@ -111,43 +126,6 @@ def find_index_file(year_dir: Path) -> Optional[Path]:
             return p
     return None
 
-def find_template_index(root: Path, target_year: int) -> Optional[Path]:
-    years = sorted(
-        [p for p in root.iterdir() if p.is_dir() and p.name.isdigit()],
-        key=lambda p: int(p.name),
-        reverse=True
-    )
-    for y in years:
-        if int(y.name) == target_year:
-            continue
-        idx = find_index_file(y)
-        if idx:
-            return idx
-    return None
-
-def _build_headers_from_template(tmpl: Path) -> Optional[List[str]]:
-    try:
-        from openpyxl import load_workbook
-        wb = load_workbook(tmpl)
-        ws = wb.active
-        raw = [c.value for c in ws[1]]
-        cells = normalize_header_cells(raw)
-        headers = []
-        for cell in cells:
-            name = canonicalize_header(cell)
-            if not is_meaningful_header(name):
-                continue
-            if name not in headers:
-                headers.append(name)
-        if not headers:
-            return None
-        for name in STD_HEADER:
-            if name not in headers:
-                headers.append(name)
-        return headers
-    except Exception:
-        return None
-
 def _create_empty_index(idx_path: Path, headers: List[str]) -> Optional[Path]:
     try:
         from openpyxl import Workbook
@@ -159,20 +137,31 @@ def _create_empty_index(idx_path: Path, headers: List[str]) -> Optional[Path]:
     except Exception:
         return None
 
-def ensure_year_index(root: Path, year: int) -> Optional[Path]:
+def build_required_headers() -> List[str]:
+    headers = []
+    for name in ["序号", *REQUIRED_HEADER]:
+        cname = canonicalize_header(name)
+        if cname and cname not in headers:
+            headers.append(cname)
+    return headers
+
+def build_year_headers(headers_needed: List[str]) -> List[str]:
+    headers = build_required_headers()
+    for name in headers_needed:
+        cname = canonicalize_header(name)
+        if cname and is_meaningful_header(cname) and cname not in headers:
+            headers.append(cname)
+    return headers
+
+def ensure_year_index(root: Path, year: int, headers_needed: List[str]) -> Optional[Path]:
     year_dir = root / str(year)
     idx_path = find_index_file(year_dir)
     if idx_path:
         return idx_path
-    tmpl = find_template_index(root, year)
     year_dir.mkdir(parents=True, exist_ok=True)
     idx_path = year_dir / "index.xlsx"
-    if tmpl:
-        headers = _build_headers_from_template(tmpl) or STD_HEADER
-        created = _create_empty_index(idx_path, headers)
-        if created:
-            return created
-    return _create_empty_index(idx_path, STD_HEADER)
+    headers = build_year_headers(headers_needed)
+    return _create_empty_index(idx_path, headers)
 
 def load_year_sheet(idx_path: Path, headers_needed: List[str]):
     if not idx_path or not idx_path.is_file():
@@ -232,7 +221,7 @@ def load_year_sheet(idx_path: Path, headers_needed: List[str]):
         return False, None, None, {}, {}, f"无法读取index.xlsx:{e}"
 
 
-def backup_and_merge(idx_path: Path, rows, headers_needed: List[str]):
+def backup_and_merge(idx_path: Path, rows, headers_needed: List[str], allowed_headers: List[str]):
     """
     写入策略（覆盖+追加）：
     - 若序号已存在，则按导入值覆盖该行对应列；
@@ -263,6 +252,7 @@ def backup_and_merge(idx_path: Path, rows, headers_needed: List[str]):
     except Exception:
         merged_cell_map = {}
 
+    allowed = {canonicalize_header(h) for h in allowed_headers if h}
     added = 0
     updated = 0
     for rec in rows:
@@ -280,7 +270,7 @@ def backup_and_merge(idx_path: Path, rows, headers_needed: List[str]):
             if not key:
                 continue
             if key not in header_map:
-                if not is_meaningful_header(key):
+                if key not in allowed or not is_meaningful_header(key):
                     continue
                 col = ws.max_column + 1
                 ws.cell(row=1, column=col, value=key)
@@ -440,10 +430,11 @@ def process_file(xlsx: Path, root: Path, header_mode: str):
         buckets.setdefault(year, []).append(r)
     for year, rows2 in buckets.items():
         if not rows2: continue
-        idx_path = ensure_year_index(root, year)
+        year_headers = build_year_headers(headers_present_in_rows(rows2, headers_seen))
+        idx_path = ensure_year_index(root, year, year_headers)
         if not idx_path:
             res["invalid"] += len(rows2)
-            res["details"].append({"year": year, "status":"invalid", "reason":"缺少index.xlsx模板"})
+            res["details"].append({"year": year, "status":"invalid", "reason":"无法创建index.xlsx"})
             continue
         _log(f"process_file file={xlsx} year={year} rows={len(rows2)} index={idx_path}")
         lock = idx_path.with_name(idx_path.name + ".lock")
@@ -456,7 +447,7 @@ def process_file(xlsx: Path, root: Path, header_mode: str):
             lock.touch()
             start_ts = time.time()
             _log(f"process_file file={xlsx} year={year} merge_start rows={len(rows2)}")
-            bak, added, updated = backup_and_merge(idx_path, rows2, headers_seen)
+            bak, added, updated = backup_and_merge(idx_path, rows2, year_headers, year_headers)
             _log(f"process_file file={xlsx} year={year} merge_done elapsed={time.time()-start_ts:.2f}s")
             res["details"].append({"year":year,"status":"wrote","rows":len(rows2),"backup":bak})
             res["added"] += added
