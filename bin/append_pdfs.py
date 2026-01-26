@@ -7,8 +7,8 @@ ROOT_DIR    = "/data/contracts"     # 你的PDF库根
 PENDING_DIR = "/data/add_pending"   # 待处理 to*.pdf
 DONE_DIR    = "/data/add_done"      # 成功归档
 ERROR_DIR   = "/data/add_error"     # 失败归档
-LOG_FILE    = "/var/log/pdf-append.log"
-LOCK_FILE   = "/var/run/pdf-append.lock"
+LOG_FILE    = "/tmp/pdf-append.log"
+LOCK_FILE   = "/tmp/pdf-append.lock"
 
 logging.basicConfig(filename=LOG_FILE, level=logging.INFO,
                     format="%(asctime)s %(levelname)s %(message)s")
@@ -16,15 +16,31 @@ logging.basicConfig(filename=LOG_FILE, level=logging.INFO,
 @contextmanager
 def single_lock(path):
     import fcntl
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w") as f:
+    lock_path = Path(path)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    acquired = False
+    with open(lock_path, "w") as f:
         try:
             fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
             f.write(str(os.getpid())); f.flush()
+            acquired = True
             yield
         except BlockingIOError:
             print("another instance running; exit")
             sys.exit(0)
+        finally:
+            if acquired:
+                try:
+                    fcntl.flock(f, fcntl.LOCK_UN)
+                except Exception:
+                    pass
+    if acquired:
+        try:
+            lock_path.unlink()
+        except FileNotFoundError:
+            pass
+        except Exception:
+            pass
 
 def merge_pdf(main_pdf, tail_pdf, out_pdf):
     from PyPDF2 import PdfReader, PdfWriter
