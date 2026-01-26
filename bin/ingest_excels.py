@@ -219,7 +219,7 @@ def backup_and_merge(idx_path: Path, rows, headers_needed: List[str]):
     os.replace(tmp, idx_path)
     return bak.name, added, updated
 def detect_header_row(values_rows, mode:str):
-    rows=[normalize_header_cells(r) for r in values_rows[:2]]
+    rows=[normalize_header_cells(r) for r in values_rows[:5]]
     if mode=="2":
         hdr = rows[1] if len(rows)>1 else []
         ok, header_map, cells = match_header(hdr) if len(rows)>1 else (False, {}, [])
@@ -228,15 +228,34 @@ def detect_header_row(values_rows, mode:str):
         hdr = rows[0] if rows else []
         ok, header_map, cells = match_header(hdr) if len(rows)>0 else (False, {}, [])
         return (len(rows)>0 and ok, 0, "表头不匹配" if not (len(rows)>0 and ok) else "", cells, header_map)
-    if len(rows)>1:
-        ok, header_map, cells = match_header(rows[1])
+    for idx, row in enumerate(rows):
+        ok, header_map, cells = match_header(row)
         if ok:
-            return True,1,"",cells, header_map
-    if len(rows)>0:
-        ok, header_map, cells = match_header(rows[0])
-        if ok:
-            return True,0,"",cells, header_map
-    return False,-1,"前两行均非标准表头", rows[0] if rows else [], {}
+            return True, idx, "", cells, header_map
+    return False,-1,"前五行均非标准表头", rows[0] if rows else [], {}
+
+def is_summary_sheet_name(name: str) -> bool:
+    if not name:
+        return False
+    normalized = str(name).strip().lower().replace(" ", "")
+    keywords = [
+        "汇总",
+        "汇總",
+        "总结",
+        "總結",
+        "总表",
+        "總表",
+        "总览",
+        "總覽",
+        "总计",
+        "總計",
+        "合计",
+        "合計",
+        "统计",
+        "統計",
+        "summary",
+    ]
+    return any(k in normalized for k in keywords)
 
 def load_pending_rows(xlsx_path: Path, header_mode: str):
     ext = xlsx_path.suffix.lower()
@@ -248,6 +267,8 @@ def load_pending_rows(xlsx_path: Path, header_mode: str):
             from openpyxl import load_workbook
             wb = load_workbook(xlsx_path, data_only=True, read_only=True)
             for ws in wb.worksheets:
+                if is_summary_sheet_name(ws.title):
+                    continue
                 values_rows = [ (list(r) if r else []) for r in ws.iter_rows(min_row=1, values_only=True) ]
                 if not any(any((v is not None and str(v).strip() != "") for v in row) for row in values_rows):
                     continue
@@ -272,6 +293,8 @@ def load_pending_rows(xlsx_path: Path, header_mode: str):
             book = xlrd.open_workbook(xlsx_path, formatting_info=False)
             for si in range(book.nsheets):
                 sh = book.sheet_by_index(si)
+                if is_summary_sheet_name(sh.name):
+                    continue
                 values_rows = [[sh.cell_value(i,j) for j in range(sh.ncols)] for i in range(sh.nrows)]
                 if not any(any((v is not None and str(v).strip() != "") for v in row) for row in values_rows):
                     continue
