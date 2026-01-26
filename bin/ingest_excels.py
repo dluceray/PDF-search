@@ -202,6 +202,17 @@ def backup_and_merge(idx_path: Path, rows, headers_needed: List[str]):
     ok, wb, ws, header_map, seq_map, why = load_year_sheet(idx_path, headers_needed)
     if not ok:
         raise ValueError(why)
+    merged_cell_map = {}
+    try:
+        for cell_range in ws.merged_cells.ranges:
+            min_row, min_col, max_row, max_col = cell_range.min_row, cell_range.min_col, cell_range.max_row, cell_range.max_col
+            for row in range(min_row, max_row + 1):
+                for col in range(min_col, max_col + 1):
+                    if row == min_row and col == min_col:
+                        continue
+                    merged_cell_map[(row, col)] = (min_row, min_col)
+    except Exception:
+        merged_cell_map = {}
 
     added = 0
     updated = 0
@@ -225,7 +236,12 @@ def backup_and_merge(idx_path: Path, rows, headers_needed: List[str]):
                 col = ws.max_column + 1
                 ws.cell(row=1, column=col, value=key)
                 header_map[key] = col - 1
-            ws.cell(row=row_idx, column=header_map[key] + 1, value=val)
+            col_idx = header_map[key] + 1
+            write_row, write_col = row_idx, col_idx
+            target = merged_cell_map.get((write_row, write_col))
+            if target:
+                write_row, write_col = target
+            ws.cell(row=write_row, column=write_col, value=val)
 
     wb.save(tmp)
     os.replace(tmp, idx_path)
