@@ -45,6 +45,8 @@ def normalize_header_cells(row):
     vals=[ ("" if v is None else str(v).strip()) for v in row ]
     while vals and vals[-1]=="": vals.pop()
     return vals
+def row_has_data(row) -> bool:
+    return any((v is not None and str(v).strip() != "") for v in row)
 def canonicalize_header(cell: str):
     val = (cell or "").strip()
     if not val:
@@ -281,6 +283,8 @@ def load_pending_rows(xlsx_path: Path, header_mode: str):
                         headers_seen.append(h)
                 for r in values_rows[hdr_idx+1:]:
                     r = list(r) if isinstance(r, (list, tuple)) else [r]
+                    if not row_has_data(r):
+                        continue
                     row = {}
                     for key, ci in header_map.items():
                         row[key] = r[ci] if ci < len(r) else ""
@@ -307,6 +311,8 @@ def load_pending_rows(xlsx_path: Path, header_mode: str):
                         headers_seen.append(h)
                 for r in values_rows[hdr_idx+1:]:
                     r = list(r) if isinstance(r, (list, tuple)) else [r]
+                    if not row_has_data(r):
+                        continue
                     row = {}
                     for key, ci in header_map.items():
                         row[key] = r[ci] if ci < len(r) else ""
