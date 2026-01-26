@@ -125,6 +125,40 @@ def find_template_index(root: Path, target_year: int) -> Optional[Path]:
             return idx
     return None
 
+def _build_headers_from_template(tmpl: Path) -> Optional[List[str]]:
+    try:
+        from openpyxl import load_workbook
+        wb = load_workbook(tmpl)
+        ws = wb.active
+        raw = [c.value for c in ws[1]]
+        cells = normalize_header_cells(raw)
+        headers = []
+        for cell in cells:
+            name = canonicalize_header(cell)
+            if not is_meaningful_header(name):
+                continue
+            if name not in headers:
+                headers.append(name)
+        if not headers:
+            return None
+        for name in STD_HEADER:
+            if name not in headers:
+                headers.append(name)
+        return headers
+    except Exception:
+        return None
+
+def _create_empty_index(idx_path: Path, headers: List[str]) -> Optional[Path]:
+    try:
+        from openpyxl import Workbook
+        wb = Workbook()
+        ws = wb.active
+        ws.append(headers)
+        wb.save(idx_path)
+        return idx_path
+    except Exception:
+        return None
+
 def ensure_year_index(root: Path, year: int) -> Optional[Path]:
     year_dir = root / str(year)
     idx_path = find_index_file(year_dir)
@@ -134,17 +168,11 @@ def ensure_year_index(root: Path, year: int) -> Optional[Path]:
     year_dir.mkdir(parents=True, exist_ok=True)
     idx_path = year_dir / "index.xlsx"
     if tmpl:
-        shutil.copy2(tmpl, idx_path)
-        return idx_path
-    try:
-        from openpyxl import Workbook
-        wb = Workbook()
-        ws = wb.active
-        ws.append(STD_HEADER)
-        wb.save(idx_path)
-        return idx_path
-    except Exception:
-        return None
+        headers = _build_headers_from_template(tmpl) or STD_HEADER
+        created = _create_empty_index(idx_path, headers)
+        if created:
+            return created
+    return _create_empty_index(idx_path, STD_HEADER)
 
 def load_year_sheet(idx_path: Path, headers_needed: List[str]):
     if not idx_path or not idx_path.is_file():
