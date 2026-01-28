@@ -154,17 +154,6 @@ def _norm_date(s:str)->str:
     t = str(s).strip()
     if t == "": return ""
 
-    # Excel序列号（如 45678 或 45678.0），基准 1899-12-30
-    if re.fullmatch(r'\d+(?:\.\d+)?', t):
-        try:
-            days = float(t)
-            if days >= 1:
-                base = datetime.datetime(1899, 12, 30)
-                dt = base + datetime.timedelta(days=days)
-                return dt.strftime('%Y-%m-%d')
-        except Exception:
-            pass
-
     # 去掉时间部分（空格后）
     t = t.split(' ')[0]
 
@@ -177,11 +166,25 @@ def _norm_date(s:str)->str:
     t = t.replace('年','-').replace('月','-').replace('日','')
     t = re.sub(r'[._/\\\s]+','-', t)
 
-    # 连写：YYYYMM / YYYYMMDD
-    if re.fullmatch(r'\d{6}', t):          # YYYYMM
-        return t[:4] + '-' + t[4:6]
-    if re.fullmatch(r'\d{8}', t):          # YYYYMMDD
-        return t[:4] + '-' + t[4:6] + '-' + t[6:8]
+    # 纯数字优先：YYYY / YYYYMM / YYYYMMDD（避免误判为 Excel 序列号）
+    if re.fullmatch(r'\d+(?:\.\d+)?', t):
+        try:
+            num = float(t)
+            if num.is_integer():
+                num_int = int(num)
+                num_str = str(num_int)
+                if len(num_str) == 4 and 1900 <= num_int <= 2100:
+                    return num_str
+                if len(num_str) == 6:          # YYYYMM
+                    return num_str[:4] + '-' + num_str[4:6]
+                if len(num_str) == 8:          # YYYYMMDD
+                    return num_str[:4] + '-' + num_str[4:6] + '-' + num_str[6:8]
+            if num >= 1:
+                base = datetime.datetime(1899, 12, 30)
+                dt = base + datetime.timedelta(days=num)
+                return dt.strftime('%Y-%m-%d')
+        except Exception:
+            pass
 
     m = re.match(r'^(\d{4})(?:-(\d{1,2}))?(?:-(\d{1,2}))?', t)
     if not m: return ""
