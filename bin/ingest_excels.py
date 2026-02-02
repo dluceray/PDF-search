@@ -113,7 +113,10 @@ def match_header(row):
     return True, header_map, headers
 def parse_year_from_seq(s: str):
     s=(s or "").strip()
-    if len(s)<2 or not s[:2].isdigit(): return False,-1,"序号前两位非数字"
+    if len(s) < 3 or not s[:2].isdigit():
+        return False, -1, "序号前两位非数字"
+    if s[2] != "-":
+        return False, -1, "序号前两位数字后缺少“-”"
     yy=int(s[:2]); year=2000+yy
     if not (YEAR_MIN<=year<=YEAR_MAX): return False,-1,f"年份超出范围:{year}"
     return True,year,""
