@@ -80,6 +80,33 @@ def is_meaningful_header(name: str) -> bool:
     if re.fullmatch(r"[^\w\u4e00-\u9fff]+", val):
         return False
     return True
+
+def normalize_merged_cells(ws):
+    try:
+        merged_ranges = list(ws.merged_cells.ranges)
+    except Exception as exc:
+        return False, f"读取合并单元格失败: {exc}"
+    if not merged_ranges:
+        return True, ""
+    _log(f"normalize_merged_cells sheet={ws.title} ranges={len(merged_ranges)}")
+    for cell_range in merged_ranges:
+        try:
+            min_row, min_col, max_row, max_col = (
+                cell_range.min_row,
+                cell_range.min_col,
+                cell_range.max_row,
+                cell_range.max_col,
+            )
+            top_left = ws.cell(row=min_row, column=min_col).value
+            ws.unmerge_cells(str(cell_range))
+            for row_idx in range(min_row, max_row + 1):
+                for col_idx in range(min_col, max_col + 1):
+                    cell = ws.cell(row=row_idx, column=col_idx)
+                    if cell.value is None:
+                        cell.value = top_left
+        except Exception as exc:
+            return False, f"处理合并单元格失败({cell_range}): {exc}"
+    return True, ""
 def header_map_from_cells(cells: List[str]):
     header_map = {}
     headers = []
@@ -172,6 +199,9 @@ def load_year_sheet(idx_path: Path, headers_needed: List[str]):
     try:
         from openpyxl import load_workbook
         wb=load_workbook(idx_path); ws=wb.active
+        ok, why = normalize_merged_cells(ws)
+        if not ok:
+            return False, None, None, {}, {}, f"无法读取index.xlsx:{why}"
         hdr=[ ("" if c.value is None else str(c.value).strip()) for c in ws[1] ]
         trimmed_headers = normalize_header_cells(hdr)
         canonical_headers = [canonicalize_header(h) for h in trimmed_headers]
