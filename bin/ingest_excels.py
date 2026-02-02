@@ -254,6 +254,37 @@ def load_year_sheet(idx_path: Path, headers_needed: List[str]):
         return False, None, None, {}, {}, f"无法读取index.xlsx:{e}"
 
 
+def _ensure_backup_dir(idx_path: Path) -> Path:
+    backup_dir = idx_path.parent / "backup"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    return backup_dir
+
+
+def _unique_backup_path(backup_dir: Path, idx_path: Path) -> Path:
+    stamp = ts()
+    candidate = backup_dir / f"{idx_path.stem}.{stamp}{idx_path.suffix}"
+    if not candidate.exists():
+        return candidate
+    for i in range(1, 1000):
+        candidate = backup_dir / f"{idx_path.stem}.{stamp}.{i}{idx_path.suffix}"
+        if not candidate.exists():
+            return candidate
+    raise RuntimeError("无法创建唯一的备份文件名")
+
+
+def _cleanup_old_backups(backup_dir: Path, keep: int = 30) -> None:
+    try:
+        backups = [p for p in backup_dir.iterdir() if p.is_file()]
+    except FileNotFoundError:
+        return
+    backups.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    for old in backups[keep:]:
+        try:
+            old.unlink()
+        except Exception:
+            pass
+
+
 def backup_and_merge(idx_path: Path, rows, headers_needed: List[str], allowed_headers: List[str]):
     """
     写入策略（覆盖+追加）：
@@ -261,14 +292,8 @@ def backup_and_merge(idx_path: Path, rows, headers_needed: List[str], allowed_he
     - 若序号不存在，则追加新行；
     - 若导入包含服务端缺失且表头有意义的列，则自动新增列。
     """
-    date_dir = idx_path.parent / datetime.now().strftime("%Y%m%d")
-    date_dir.mkdir(parents=True, exist_ok=True)
-    bak = date_dir / idx_path.name
-    if bak.exists():
-        bak = date_dir / f"{idx_path.stem}.{ts()}{idx_path.suffix}"
     tmp = idx_path.with_suffix(".tmp.xlsx")
     _log(f"backup_and_merge start index={idx_path} rows={len(rows)} headers_needed={headers_needed}")
-    shutil.copy2(idx_path, bak)
 
     ok, wb, ws, header_map, seq_map, why = load_year_sheet(idx_path, headers_needed)
     if not ok:
@@ -288,17 +313,20 @@ def backup_and_merge(idx_path: Path, rows, headers_needed: List[str], allowed_he
     allowed = {canonicalize_header(h) for h in allowed_headers if h}
     added = 0
     updated = 0
+    changed_any = False
     for rec in rows:
         seq = str(rec.get("序号", "") or "").strip()
         if not seq:
             continue
         row_idx = seq_map.get(seq)
+        is_existing = row_idx is not None
+        row_changed = False
         if row_idx is None:
             row_idx = ws.max_row + 1
             seq_map[seq] = row_idx
             added += 1
-        else:
-            updated += 1
+            row_changed = True
+            changed_any = True
         for key, val in rec.items():
             if not key:
                 continue
@@ -308,17 +336,35 @@ def backup_and_merge(idx_path: Path, rows, headers_needed: List[str], allowed_he
                 col = ws.max_column + 1
                 ws.cell(row=1, column=col, value=key)
                 header_map[key] = col - 1
+                changed_any = True
             col_idx = header_map[key] + 1
             write_row, write_col = row_idx, col_idx
             target = merged_cell_map.get((write_row, write_col))
             if target:
                 write_row, write_col = target
-            ws.cell(row=write_row, column=write_col, value=val)
+            cell = ws.cell(row=write_row, column=write_col)
+            if cell.value != val:
+                cell.value = val
+                row_changed = True
+                changed_any = True
 
+        if row_changed and is_existing:
+            updated += 1
+
+    if not changed_any:
+        _log(f"backup_and_merge no_change index={idx_path} rows={len(rows)}")
+        return "", 0, 0
+
+    backup_dir = _ensure_backup_dir(idx_path)
+    bak = _unique_backup_path(backup_dir, idx_path)
+    shutil.copy2(idx_path, bak)
     wb.save(tmp)
     os.replace(tmp, idx_path)
+    _cleanup_old_backups(backup_dir, keep=30)
     _log(f"backup_and_merge done index={idx_path} backup={bak} added={added} updated={updated}")
     return bak.name, added, updated
+
+
 def detect_header_row(values_rows, mode:str):
     rows=[normalize_header_cells(r) for r in values_rows[:5]]
     if mode=="2":
@@ -482,10 +528,14 @@ def process_file(xlsx: Path, root: Path, header_mode: str):
             _log(f"process_file file={xlsx} year={year} merge_start rows={len(rows2)}")
             bak, added, updated = backup_and_merge(idx_path, rows2, year_headers, year_headers)
             _log(f"process_file file={xlsx} year={year} merge_done elapsed={time.time()-start_ts:.2f}s")
-            res["details"].append({"year":year,"status":"wrote","rows":len(rows2),"backup":bak})
+            status = "wrote" if bak else "no_change"
+            detail = {"year": year, "status": status, "rows": len(rows2)}
+            if bak:
+                detail["backup"] = bak
+            res["details"].append(detail)
             res["added"] += added
             res["updated"] += updated
-            _log(f"process_file file={xlsx} year={year} added={added} updated={updated} backup={bak}")
+            _log(f"process_file file={xlsx} year={year} added={added} updated={updated} backup={bak or 'none'}")
         except Exception as exc:
             _log(f"process_file file={xlsx} year={year} merge_failed error={exc!r}")
             raise
