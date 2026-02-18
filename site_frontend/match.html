@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>比赛系统</title>
+  <style>
+    body{font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:#f6f7f9;margin:0;color:#111}
+    .wrap{max-width:1100px;margin:20px auto;padding:0 14px}
+    .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
+    .title{font-size:22px;font-weight:700}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    @media (max-width:900px){.grid{grid-template-columns:1fr}}
+    .card{background:#fff;border:1px solid #e3e5e8;border-radius:12px;padding:14px;box-shadow:0 3px 12px rgba(0,0,0,.04)}
+    h3{margin:0 0 10px}
+    input,select,textarea,button{width:100%;padding:10px;border-radius:10px;border:1px solid #d7dbe0;box-sizing:border-box;font-size:14px}
+    textarea{min-height:74px;resize:vertical}
+    .row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+    button{background:#2d6cff;color:#fff;border:none;cursor:pointer}
+    button:hover{opacity:.93}
+    .muted{font-size:12px;color:#666;margin-top:6px}
+    .list{max-height:420px;overflow:auto;border:1px solid #eceff2;border-radius:10px}
+    .item{padding:10px;border-bottom:1px solid #f0f2f5}
+    .item:last-child{border-bottom:none}
+    table{width:100%;border-collapse:collapse;font-size:13px}
+    th,td{border-bottom:1px solid #eff1f3;padding:6px;text-align:left}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="top">
+      <div class="title">羽毛球积分赛系统（简版）</div>
+      <a href="/login.html">返回登录</a>
+    </div>
+
+    <div class="grid">
+      <section class="card">
+        <h3>1) 新建赛事</h3>
+        <input id="tName" placeholder="赛事名称，如：2026 春季积分赛" />
+        <div class="row" style="margin-top:8px">
+          <select id="tLevel">
+            <option value="1000">Super 1000</option>
+            <option value="750">Super 750</option>
+            <option value="500">Super 500</option>
+            <option value="300" selected>Super 300</option>
+            <option value="100">Super 100</option>
+          </select>
+          <input id="tDate" placeholder="开始日期 2026-03-10" />
+        </div>
+        <input id="tCate" placeholder="项目，如：男单/女双" style="margin-top:8px" />
+        <textarea id="tDesc" placeholder="赛事说明（可选）" style="margin-top:8px"></textarea>
+        <button style="margin-top:8px" onclick="createTournament()">创建赛事</button>
+        <div class="muted">积分参考 BWF 级别积分分配（简化映射）。</div>
+      </section>
+
+      <section class="card">
+        <h3>2) 赛事列表</h3>
+        <div class="list" id="tourList"></div>
+      </section>
+
+      <section class="card">
+        <h3>3) 报名 / 裁判 / 计分</h3>
+        <select id="tourPick"></select>
+        <div class="row" style="margin-top:8px">
+          <input id="pName" placeholder="报名选手姓名" />
+          <button onclick="addParticipant()">报名</button>
+        </div>
+        <div class="row" style="margin-top:8px">
+          <input id="rName" placeholder="裁判姓名" />
+          <button onclick="addReferee()">添加裁判</button>
+        </div>
+        <div class="row" style="margin-top:8px"><input id="mP1" placeholder="选手1"/><input id="mP2" placeholder="选手2"/></div>
+        <div class="row" style="margin-top:8px"><input id="mS1" type="number" min="0" placeholder="选手1得分"/><input id="mS2" type="number" min="0" placeholder="选手2得分"/></div>
+        <div class="row" style="margin-top:8px"><input id="mRef" placeholder="裁判（可选）"/><button onclick="addMatch()">录入比分</button></div>
+      </section>
+
+      <section class="card">
+        <h3>4) 排名 + 简易社群</h3>
+        <div id="ranking"></div>
+        <hr style="border:none;border-top:1px solid #eceff2;margin:10px 0">
+        <div class="row"><input id="postAuthor" placeholder="发帖人"/><button onclick="postCommunity()">发布</button></div>
+        <textarea id="postContent" placeholder="输入交流内容" style="margin-top:8px"></textarea>
+        <div class="list" id="posts" style="margin-top:8px"></div>
+      </section>
+    </div>
+  </div>
+
+<script>
+const $ = (id)=>document.getElementById(id);
+let tournaments = [];
+
+function msg(t){ alert(t); }
+
+async function api(path, method='GET', body){
+  const res = await fetch(path,{method,headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});
+  const data = await res.json().catch(()=>({}));
+  if(!res.ok) throw new Error(data.detail || '请求失败');
+  return data;
+}
+
+function selectedId(){ return $('tourPick').value; }
+
+function renderTournaments(){
+  const list = $('tourList');
+  const pick = $('tourPick');
+  list.innerHTML = '';
+  pick.innerHTML = '';
+  tournaments.forEach(t=>{
+    const d = document.createElement('div');
+    d.className = 'item';
+    d.textContent = `${t.name} | ${t.category || ''} | Level ${t.level} | 报名 ${t.participants?.length||0} 人`;
+    d.onclick = ()=>{ pick.value = t.id; renderDetails(); };
+    list.appendChild(d);
+
+    const o = document.createElement('option');
+    o.value = t.id;
+    o.textContent = t.name;
+    pick.appendChild(o);
+  });
+  if (tournaments.length && !pick.value){ pick.value = tournaments[0].id; }
+  renderDetails();
+}
+
+function renderDetails(){
+  const t = tournaments.find(x=>x.id===selectedId());
+  if(!t){ $('ranking').innerHTML='暂无赛事'; $('posts').innerHTML=''; return; }
+  const rows = (t.ranking||[]).map((r, i)=>`<tr><td>${i+1}</td><td>${r.name}</td><td>${r.wins}-${r.losses}</td><td>${r.games_for-r.games_against}</td><td>${r.points}</td></tr>`).join('');
+  $('ranking').innerHTML = `<table><thead><tr><th>#</th><th>选手</th><th>胜负</th><th>净胜分</th><th>积分</th></tr></thead><tbody>${rows || '<tr><td colspan="5">暂无排名</td></tr>'}</tbody></table>`;
+  $('posts').innerHTML = (t.community_posts||[]).slice().reverse().map(p=>`<div class="item"><b>${p.author}</b>：${p.content}</div>`).join('') || '<div class="item">暂无帖子</div>';
+}
+
+async function refresh(){
+  const data = await api('/api/tournaments');
+  tournaments = data.items || [];
+  renderTournaments();
+}
+
+async function createTournament(){
+  try{
+    await api('/api/tournaments','POST',{name:$('tName').value, level:$('tLevel').value, start_date:$('tDate').value, category:$('tCate').value, description:$('tDesc').value});
+    await refresh();
+    msg('创建成功');
+  }catch(e){ msg(e.message); }
+}
+
+async function addParticipant(){
+  try{ await api(`/api/tournaments/${selectedId()}/participants`,'POST',{name:$('pName').value}); await refresh(); }catch(e){ msg(e.message); }
+}
+async function addReferee(){
+  try{ await api(`/api/tournaments/${selectedId()}/referees`,'POST',{name:$('rName').value}); await refresh(); }catch(e){ msg(e.message); }
+}
+async function addMatch(){
+  try{
+    await api(`/api/tournaments/${selectedId()}/matches`,'POST',{player1:$('mP1').value, player2:$('mP2').value, score1:Number($('mS1').value||0), score2:Number($('mS2').value||0), referee:$('mRef').value});
+    await refresh();
+  }catch(e){ msg(e.message); }
+}
+async function postCommunity(){
+  try{
+    await api(`/api/tournaments/${selectedId()}/community`,'POST',{author:$('postAuthor').value || '匿名', content:$('postContent').value});
+    $('postContent').value='';
+    await refresh();
+  }catch(e){ msg(e.message); }
+}
+
+$('tourPick').addEventListener('change', renderDetails);
+refresh();
+</script>
+</body>
+</html>
