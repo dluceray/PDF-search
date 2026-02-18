@@ -5,6 +5,7 @@ from fastapi.responses import RedirectResponse
 import hashlib
 import json
 import os, re, datetime, uuid, threading, decimal
+from pathlib import Path
 from typing import List, Optional, Dict
 from fastapi import FastAPI, Header, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -40,6 +41,83 @@ RETURN_FIELDS = ["序号","工程地点及内容","单位名称","签订日期",
 PASSWORD_FALLBACK = "1982567"
 PASSWORDS_FILE = os.path.join(os.path.dirname(__file__), "DATA", "passwords.txt")
 TOKENS: Dict[str, float] = {}
+TOURNAMENTS_DB = Path(os.path.join(os.path.dirname(__file__), "DATA", "tournaments.json"))
+
+# 参考 BWF（国际羽联）常见级别积分结构；用于简化积分赛
+BWF_POINTS_TABLE = {
+    "1000": {"winner": 12000, "runner_up": 10200, "semi": 8400, "quarter": 6600, "r16": 4800, "r32": 3000},
+    "750": {"winner": 11000, "runner_up": 9350, "semi": 7700, "quarter": 6050, "r16": 4320, "r32": 2660},
+    "500": {"winner": 9200, "runner_up": 7800, "semi": 6420, "quarter": 5040, "r16": 3600, "r32": 2220},
+    "300": {"winner": 7000, "runner_up": 5950, "semi": 4900, "quarter": 3850, "r16": 2750, "r32": 1670},
+    "100": {"winner": 5500, "runner_up": 4680, "semi": 3850, "quarter": 3030, "r16": 2170, "r32": 1330},
+}
+
+
+def _empty_tournaments_db() -> Dict:
+    return {"tournaments": []}
+
+
+def _load_tournaments_db() -> Dict:
+    if not TOURNAMENTS_DB.exists():
+        return _empty_tournaments_db()
+    try:
+        return json.loads(TOURNAMENTS_DB.read_text(encoding="utf-8"))
+    except Exception:
+        return _empty_tournaments_db()
+
+
+def _save_tournaments_db(data: Dict):
+    TOURNAMENTS_DB.parent.mkdir(parents=True, exist_ok=True)
+    TOURNAMENTS_DB.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _rank_to_points(level: str, rank_key: str) -> int:
+    level_points = BWF_POINTS_TABLE.get(level, BWF_POINTS_TABLE["300"])
+    return int(level_points.get(rank_key, 0))
+
+
+def _compute_score_and_ranking(tour: Dict):
+    players = {p["name"]: {"name": p["name"], "wins": 0, "losses": 0, "games_for": 0, "games_against": 0, "points": 0} for p in tour.get("participants", [])}
+
+    for m in tour.get("matches", []):
+        p1 = m.get("player1", "")
+        p2 = m.get("player2", "")
+        if p1 not in players or p2 not in players:
+            continue
+        s1 = int(m.get("score1", 0) or 0)
+        s2 = int(m.get("score2", 0) or 0)
+        players[p1]["games_for"] += s1
+        players[p1]["games_against"] += s2
+        players[p2]["games_for"] += s2
+        players[p2]["games_against"] += s1
+        if s1 == s2:
+            continue
+        winner, loser = (p1, p2) if s1 > s2 else (p2, p1)
+        players[winner]["wins"] += 1
+        players[loser]["losses"] += 1
+
+    ranking = sorted(
+        players.values(),
+        key=lambda x: (x["wins"], x["games_for"] - x["games_against"], x["games_for"]),
+        reverse=True,
+    )
+
+    for idx, row in enumerate(ranking):
+        if idx == 0:
+            rk = "winner"
+        elif idx == 1:
+            rk = "runner_up"
+        elif idx in (2, 3):
+            rk = "semi"
+        elif idx <= 7:
+            rk = "quarter"
+        elif idx <= 15:
+            rk = "r16"
+        else:
+            rk = "r32"
+        row["points"] = _rank_to_points(tour.get("level", "300"), rk)
+
+    tour["ranking"] = ranking
 
 def _load_passwords() -> set[str]:
     try:
@@ -306,6 +384,35 @@ class ReloadIn(BaseModel):
     amount_numeric_equivalence: Optional[bool] = None
     amount_zero_means_empty: Optional[bool] = None
     text_logic_or: Optional[bool] = None
+
+
+class TournamentCreateIn(BaseModel):
+    name: str
+    level: Optional[str] = "300"
+    category: Optional[str] = "男单"
+    start_date: Optional[str] = ""
+    description: Optional[str] = ""
+
+
+class RegisterParticipantIn(BaseModel):
+    name: str
+
+
+class AddRefereeIn(BaseModel):
+    name: str
+
+
+class MatchScoreIn(BaseModel):
+    player1: str
+    player2: str
+    score1: int
+    score2: int
+    referee: Optional[str] = ""
+
+
+class CommunityPostIn(BaseModel):
+    author: str
+    content: str
 
 @app.get("/api/health")
 def health(): return {"ok": True, "ts": int(_utc_now_ts())}
@@ -595,3 +702,113 @@ def do_login(password: str = Form(...)):
     resp = RedirectResponse(url="/", status_code=302)
     resp.set_cookie("X-Auth", t, httponly=True, samesite="lax", max_age=24*3600)
     return resp
+
+
+@app.get("/api/tournaments")
+def list_tournaments():
+    data = _load_tournaments_db()
+    return {"ok": True, "items": data.get("tournaments", [])}
+
+
+@app.post("/api/tournaments")
+def create_tournament(body: TournamentCreateIn):
+    data = _load_tournaments_db()
+    level = body.level if body.level in BWF_POINTS_TABLE else "300"
+    tour = {
+        "id": str(uuid.uuid4()),
+        "name": body.name.strip(),
+        "level": level,
+        "category": body.category,
+        "start_date": body.start_date,
+        "description": body.description,
+        "participants": [],
+        "referees": [],
+        "matches": [],
+        "ranking": [],
+        "community_posts": [],
+        "created_at": datetime.datetime.utcnow().isoformat(),
+    }
+    data["tournaments"].append(tour)
+    _save_tournaments_db(data)
+    return {"ok": True, "item": tour}
+
+
+@app.post("/api/tournaments/{tournament_id}/participants")
+def add_participant(tournament_id: str, body: RegisterParticipantIn):
+    data = _load_tournaments_db()
+    for tour in data.get("tournaments", []):
+        if tour.get("id") != tournament_id:
+            continue
+        name = body.name.strip()
+        if not name:
+            raise HTTPException(400, "姓名不能为空")
+        if any(p.get("name") == name for p in tour.get("participants", [])):
+            raise HTTPException(400, "选手已存在")
+        tour["participants"].append({"name": name, "joined_at": datetime.datetime.utcnow().isoformat()})
+        _compute_score_and_ranking(tour)
+        _save_tournaments_db(data)
+        return {"ok": True, "item": tour}
+    raise HTTPException(404, "赛事不存在")
+
+
+@app.post("/api/tournaments/{tournament_id}/referees")
+def add_referee(tournament_id: str, body: AddRefereeIn):
+    data = _load_tournaments_db()
+    for tour in data.get("tournaments", []):
+        if tour.get("id") != tournament_id:
+            continue
+        name = body.name.strip()
+        if not name:
+            raise HTTPException(400, "裁判姓名不能为空")
+        if name not in tour.get("referees", []):
+            tour["referees"].append(name)
+        _save_tournaments_db(data)
+        return {"ok": True, "item": tour}
+    raise HTTPException(404, "赛事不存在")
+
+
+@app.post("/api/tournaments/{tournament_id}/matches")
+def add_match_score(tournament_id: str, body: MatchScoreIn):
+    data = _load_tournaments_db()
+    for tour in data.get("tournaments", []):
+        if tour.get("id") != tournament_id:
+            continue
+        names = {p.get("name") for p in tour.get("participants", [])}
+        if body.player1 not in names or body.player2 not in names:
+            raise HTTPException(400, "请先报名再录入比分")
+        if body.player1 == body.player2:
+            raise HTTPException(400, "对阵双方不能相同")
+        match = {
+            "id": str(uuid.uuid4()),
+            "player1": body.player1,
+            "player2": body.player2,
+            "score1": max(0, int(body.score1)),
+            "score2": max(0, int(body.score2)),
+            "referee": body.referee,
+            "updated_at": datetime.datetime.utcnow().isoformat(),
+        }
+        tour["matches"].append(match)
+        _compute_score_and_ranking(tour)
+        _save_tournaments_db(data)
+        return {"ok": True, "item": tour}
+    raise HTTPException(404, "赛事不存在")
+
+
+@app.post("/api/tournaments/{tournament_id}/community")
+def post_to_community(tournament_id: str, body: CommunityPostIn):
+    data = _load_tournaments_db()
+    for tour in data.get("tournaments", []):
+        if tour.get("id") != tournament_id:
+            continue
+        post = {
+            "id": str(uuid.uuid4()),
+            "author": (body.author or "匿名").strip() or "匿名",
+            "content": body.content.strip(),
+            "created_at": datetime.datetime.utcnow().isoformat(),
+        }
+        if not post["content"]:
+            raise HTTPException(400, "内容不能为空")
+        tour.setdefault("community_posts", []).append(post)
+        _save_tournaments_db(data)
+        return {"ok": True, "item": post, "posts": tour.get("community_posts", [])}
+    raise HTTPException(404, "赛事不存在")
