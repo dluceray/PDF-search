@@ -254,8 +254,8 @@ small.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospa
           <div>
             <label>欠付款筛选</label>
             <div style="display:flex;gap:14px;align-items:center;min-height:32px;">
-              <label style="margin:0;display:flex;align-items:center;gap:6px;"><input type="checkbox" id="unpaidZero" checked/>已结清（绿色）</label>
               <label style="margin:0;display:flex;align-items:center;gap:6px;"><input type="checkbox" id="unpaidNonZero" checked/>未结清（白色）</label>
+              <label style="margin:0;display:flex;align-items:center;gap:6px;"><input type="checkbox" id="unpaidZero" checked/>已结清（绿色）</label>
             </div>
           </div>
         </div>
@@ -346,18 +346,10 @@ function escapeHtml(text){
 function toast(t){const el=$("#toast"); el.textContent=t; el.classList.add('show'); setTimeout(()=>el.classList.remove('show'), 2000);}
 function busy(on){ $("#spin").style.display=on?'inline-block':'none'; }
 function setLoginUI(ok){
-  
   // /*CLEAR_FORM_ON_LOGIN*/
   try{
     if (ok) {
-      ["loc","unit","no","dt","amt"].forEach(function(id){
-        var el=document.getElementById(id); if(el) el.value="";
-      });
-      var z=document.getElementById("unpaidZero"); if(z) z.checked=true;
-      var nz=document.getElementById("unpaidNonZero"); if(nz) nz.checked=true;
-      var tb=document.getElementById("tbody"); if(tb) tb.innerHTML="";
-      var c=document.getElementById("count"); if(c) c.textContent="0 条";
-      var be=document.getElementById("btnExport"); if(be) be.disabled=true;
+      resetSearchFormState();
     }
   }catch(e){}
 $("#state").innerHTML = (ok?'<span class="dot ok"></span> 已登录':'<span class="dot"></span> 未登录');
@@ -551,6 +543,16 @@ function updateExportButton(enabled){
   if (!btn) return;
   btn.disabled = !enabled;
 }
+function resetSearchFormState(){
+  ["loc","unit","no","dt","amt"].forEach(function(id){
+    var el=document.getElementById(id); if(el) el.value="";
+  });
+  var z=document.getElementById("unpaidZero"); if(z) z.checked=true;
+  var nz=document.getElementById("unpaidNonZero"); if(nz) nz.checked=true;
+  var tb=document.getElementById("tbody"); if(tb) tb.innerHTML="";
+  var c=document.getElementById("count"); if(c) c.textContent="0 条";
+  updateExportButton(false);
+}
 async function loginPOST(pwd){ return fetch('/api/mdirs/login',{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({password:pwd})}); }
 async function loginGET(pwd){ return fetch('/api/mdirs/login?password='+encodeURIComponent(pwd)); }
 async function doLogin(pwd){
@@ -568,6 +570,9 @@ async function doLogin(pwd){
 $("#btnLogin").onclick=()=>doLogin($("#pwd").value.trim());
 $("#btnLogout").onclick=()=>{ localStorage.removeItem('X_AUTH'); TOKEN=''; setLoginUI(false); toast("已退出"); };
 if(TOKEN){ setLoginUI(true); }
+window.addEventListener("pageshow", function(){
+  resetSearchFormState();
+});
 
 const autoToggle = $("#autoUpdateToggle");
 if (autoToggle) {
