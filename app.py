@@ -3,10 +3,11 @@ import time
 import shutil
 from fastapi import Cookie
 from fastapi import Form
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, StreamingResponse
 import hashlib
 import json
-import os, re, datetime, uuid, threading, decimal
+import os, re, datetime, uuid, threading, decimal, io
+from urllib.parse import quote
 from typing import List, Optional, Dict
 from fastapi import FastAPI, Header, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -495,6 +496,8 @@ class QueryIn(BaseModel):
     合同编号: Optional[str]=""
     签订日期: Optional[str]=""   # 支持 年/年月/年月日
     合同额: Optional[str]=""      # 数值等价；"0" 视为忽略
+    欠付款为0: Optional[bool]=True
+    欠付款不为0: Optional[bool]=True
     # 可选覆盖开关（不传则使用全局配置）
     case_insensitive: Optional[bool]=None
     text_logic_or: Optional[bool]=None
@@ -513,6 +516,116 @@ class ReloadIn(BaseModel):
     amount_numeric_equivalence: Optional[bool] = None
     amount_zero_means_empty: Optional[bool] = None
     text_logic_or: Optional[bool] = None
+
+
+def _parse_amount_decimal(value) -> decimal.Decimal:
+    if value is None:
+        return decimal.Decimal("0")
+    text = str(value).strip()
+    if text == "":
+        return decimal.Decimal("0")
+    t = (text.replace("￥", "").replace("¥", "").replace("人民币", "").replace("元", "")
+             .replace("CNY", "").replace("RMB", "").replace(",", "").replace(" ", ""))
+    t = re.sub(r"[^0-9.\-]", "", t)
+    if t in ("", "-", ".", "-.", ".-"):
+        return decimal.Decimal("0")
+    try:
+        return decimal.Decimal(t)
+    except Exception:
+        return decimal.Decimal("0")
+
+
+def _is_settled_row(row: dict) -> bool:
+    paid = _parse_amount_decimal(row.get("已付款", ""))
+    contract = _parse_amount_decimal(row.get("合同额", ""))
+    settle = _parse_amount_decimal(row.get("结算值", ""))
+    unpaid = _parse_amount_decimal(row.get("欠付款", ""))
+    paid_matches = (paid != 0 and contract != 0 and paid == contract) or (paid != 0 and settle != 0 and paid == settle)
+    return paid_matches and unpaid == 0
+
+
+def _collect_search_results(q: QueryIn):
+    # 读取配置/覆盖
+    ci = q.case_insensitive if q.case_insensitive is not None else CONFIG.get("case_insensitive", True)
+    text_or = q.text_logic_or if q.text_logic_or is not None else CONFIG.get("text_logic_or", False)
+    amt_numeric = CONFIG.get("amount_numeric_equivalence", True)
+
+    def norm_text(s: str) -> str:
+        s = str(s or "")
+        return s.lower() if ci else s
+
+    data = _load_all_rows()
+    res = []
+
+    kw_loc = norm_text((q.工程地点及内容 or "").strip())
+    kw_unit = norm_text((q.单位名称 or "").strip())
+    kw_no = norm_text((q.合同编号 or "").strip())
+    kw_date = _norm_in_date_std(q.签订日期 or "")
+    if isinstance(kw_date, str) and kw_date.isdigit() and len(kw_date) == 4:
+        kw_date = kw_date + "-"
+    if isinstance(kw_date, str) and kw_date.isdigit() and len(kw_date) == 4:
+        kw_date = kw_date + "-"   # 年/年月/年月日 → 前缀匹配
+    kw_amt = _normalize_amount_to_decimal((q.合同额 or "").strip()) if amt_numeric else None
+
+    include_unpaid_zero = q.欠付款为0 if q.欠付款为0 is not None else True
+    include_unpaid_non_zero = q.欠付款不为0 if q.欠付款不为0 is not None else True
+
+    # 哪些文本条件参与（空的不参与）
+    text_filters = []
+    if kw_loc:
+        text_filters.append(("工程地点及内容", kw_loc))
+    if kw_unit:
+        text_filters.append(("单位名称", kw_unit))
+    if kw_no:
+        text_filters.append(("合同编号_or_序号", kw_no))
+    if kw_date:
+        text_filters.append(("签订日期_norm_prefix", kw_date))
+
+    for it in data:
+        ok = True
+
+        # 1) 金额数值等价（提供且非0时才参与）
+        if amt_numeric and (kw_amt is not None):
+            item_amt = _normalize_amount_to_decimal(it.get("合同额", ""))
+            if item_amt is None or item_amt != kw_amt:
+                ok = False
+        if not ok:
+            continue
+
+        # 2) 文本条件：AND（默认）；OR 可通过 text_logic_or=true 切换
+        if text_filters:
+            hits = []
+            for kind, val in text_filters:
+                if kind == "工程地点及内容":
+                    hits.append(val in norm_text(it.get("工程地点及内容", "")))
+                elif kind == "单位名称":
+                    hits.append(val in norm_text(it.get("单位名称", "")))
+                elif kind == "合同编号_or_序号":
+                    hay = norm_text(it.get("合同编号", "") or it.get("序号", ""))
+                    hits.append(val in hay)
+                elif kind == "签订日期_norm_prefix":
+                    cur = _norm_in_date(it.get("签订日期_norm", "") or it.get("签订日期", ""))
+                    hits.append(globals().get('_date_match', _date_match)(kw_date, cur))
+            if text_or:
+                if not any(hits):
+                    ok = False
+            else:
+                if not all(hits):
+                    ok = False
+
+        if not ok:
+            continue
+
+        is_settled = _is_settled_row(it)
+        if (is_settled and not include_unpaid_zero) or ((not is_settled) and not include_unpaid_non_zero):
+            continue
+
+        item = {k: it.get(k, "") for k in RETURN_FIELDS}
+        item["__source_file"] = it.get("__source_file", "")
+        item["__row_index"] = it.get("__row_index", 0)
+        res.append(item)
+
+    return res, kw_date
 
 class AutoUpdateToggleIn(BaseModel):
     enabled: bool
@@ -545,72 +658,129 @@ def reload_cfg(body: ReloadIn, x_auth: str = Header(None)):
 
 @app.post("/api/search", dependencies=[Depends(require_auth)])
 def search(q: QueryIn, x_auth: str = Header(None)):
-    # 读取配置/覆盖
-    ci = q.case_insensitive if q.case_insensitive is not None else CONFIG.get("case_insensitive", True)
-    text_or = q.text_logic_or if q.text_logic_or is not None else CONFIG.get("text_logic_or", False)
-    amt_numeric = CONFIG.get("amount_numeric_equivalence", True)
-
-    def norm_text(s:str)->str:
-        s=str(s or "")
-        return s.lower() if ci else s
-
-    data=_load_all_rows()
-    res=[]
-
-    kw_loc = norm_text((q.工程地点及内容 or "").strip())
-    kw_unit= norm_text((q.单位名称 or "").strip())
-    kw_no  = norm_text((q.合同编号 or "").strip())
-    kw_date= _norm_in_date_std(q.签订日期 or "")
-    if isinstance(kw_date,str) and kw_date.isdigit() and len(kw_date)==4:
-        kw_date = kw_date + "-"
-    if isinstance(kw_date,str) and kw_date.isdigit() and len(kw_date)==4:
-        kw_date = kw_date + "-"   # 年/年月/年月日 → 前缀匹配
-    kw_amt = _normalize_amount_to_decimal((q.合同额 or "").strip()) if amt_numeric else None
-
-    # 哪些文本条件参与（空的不参与）
-    text_filters = []
-    if kw_loc:  text_filters.append(("工程地点及内容", kw_loc))
-    if kw_unit: text_filters.append(("单位名称", kw_unit))
-    if kw_no:   text_filters.append(("合同编号_or_序号", kw_no))
-    if kw_date: text_filters.append(("签订日期_norm_prefix", kw_date))
-
-    for it in data:
-        ok=True
-
-        # 1) 金额数值等价（提供且非0时才参与）
-        if amt_numeric and (kw_amt is not None):
-            item_amt = _normalize_amount_to_decimal(it.get("合同额",""))
-            if item_amt is None or item_amt != kw_amt:
-                ok=False
-        if not ok: continue
-
-        # 2) 文本条件：AND（默认）；OR 可通过 text_logic_or=true 切换
-        if text_filters:
-            hits=[]
-            for kind, val in text_filters:
-                if kind=="工程地点及内容":
-                    hits.append(val in norm_text(it.get("工程地点及内容","")))
-                elif kind=="单位名称":
-                    hits.append(val in norm_text(it.get("单位名称","")))
-                elif kind=="合同编号_or_序号":
-                    hay = norm_text(it.get("合同编号","") or it.get("序号",""))
-                    hits.append(val in hay)
-                elif kind=="签订日期_norm_prefix":
-                    cur=_norm_in_date(it.get("签订日期_norm","") or it.get("签订日期",""))
-                    hits.append(globals().get('_date_match', _date_match)(kw_date, cur))
-            if text_or:
-                if not any(hits): ok=False
-            else:
-                if not all(hits): ok=False
-
-        if ok:
-            item = {k:it.get(k,"") for k in RETURN_FIELDS}
-            item["__source_file"] = it.get("__source_file", "")
-            item["__row_index"] = it.get("__row_index", 0)
-            res.append(item)
+    res, kw_date = _collect_search_results(q)
 
     off=max(0, int(q.offset or 0)); lim=min(200, max(1, int(q.limit or 50)))
     return {"count": len(res), "count_strict": sum(1 for _it in res if str(_it.get("序号","")).strip()), "items": res[off:off+lim], "offset": off, "limit": lim, "debug": {"kw_date": kw_date, "sample_cur": [(_norm_in_date(it.get("签订日期_norm","") or it.get("签订日期",""))) for it in res[:5]]}}  # DEBUG_DATE_SNIPPET
+
+
+@app.post("/api/search/export", dependencies=[Depends(require_auth)])
+def search_export(q: QueryIn):
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+
+    rows, kw_date = _collect_search_results(q)
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "搜索结果"
+
+    headers = ["序号", "工程地点及内容", "单位名称", "签订日期", "合同额", "结算值", "已付款", "欠付款", "合同编号"]
+    ws.append(headers)
+
+    font_header = Font(name="Microsoft YaHei", size=11, bold=True)
+    font_body = Font(name="Microsoft YaHei", size=10)
+    align_header = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    align_left = Alignment(horizontal="left", vertical="top", wrap_text=True)
+    align_center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    align_right = Alignment(horizontal="right", vertical="top", wrap_text=True)
+    fill_settled = PatternFill(fill_type="solid", fgColor="EAF6EE")
+
+    ws.row_dimensions[1].height = 24
+    for col_idx, header in enumerate(headers, start=1):
+        cell = ws.cell(row=1, column=col_idx, value=header)
+        cell.font = font_header
+        cell.alignment = align_header
+
+    col_widths = {
+        "A": 14,
+        "B": 40,
+        "C": 24,
+        "D": 14,
+        "E": 15,
+        "F": 15,
+        "G": 15,
+        "H": 15,
+        "I": 22,
+    }
+    for col, width in col_widths.items():
+        ws.column_dimensions[col].width = width
+
+    for idx, item in enumerate(rows, start=2):
+        values = [item.get(k, "") for k in headers]
+        ws.append(values)
+        ws.row_dimensions[idx].height = 36
+        settled = _is_settled_row(item)
+        for col_idx in range(1, len(headers) + 1):
+            cell = ws.cell(row=idx, column=col_idx)
+            cell.font = font_body
+            if col_idx in (5, 6, 7, 8):
+                cell.alignment = align_right
+            elif col_idx in (1, 4):
+                cell.alignment = align_center
+            else:
+                cell.alignment = align_left
+            if settled:
+                cell.fill = fill_settled
+
+    summary = wb.create_sheet("汇总")
+    summary.column_dimensions["A"].width = 18
+    summary.column_dimensions["B"].width = 20
+    summary.column_dimensions["C"].width = 18
+    summary.column_dimensions["D"].width = 18
+    summary.column_dimensions["E"].width = 18
+
+    summary_headers = ["分类", "合同总数", "欠付款总数", "起始日期", "结束日期"]
+    summary.append(summary_headers)
+    for cidx in range(1, len(summary_headers) + 1):
+        c = summary.cell(row=1, column=cidx)
+        c.font = font_header
+        c.alignment = align_header
+    summary.row_dimensions[1].height = 24
+
+    def classify_party(index_no: str) -> str:
+        t = (index_no or "").upper()
+        if "GF" in t:
+            return "国丰"
+        if "HT" in t:
+            return "华腾"
+        if "DQ" in t:
+            return "蝶泉"
+        return "其他"
+
+    parties = {"总计": rows, "国丰": [], "华腾": [], "蝶泉": [], "其他": []}
+    for row in rows:
+        parties[classify_party(str(row.get("序号", "")))].append(row)
+
+    date_values = [_norm_date(str(r.get("签订日期", ""))) for r in rows]
+    date_values = [d for d in date_values if d]
+    date_start = min(date_values) if date_values else (kw_date or "-")
+    date_end = max(date_values) if date_values else (kw_date or "-")
+
+    summary_rows = []
+    for name in ["总计", "国丰", "华腾", "蝶泉", "其他"]:
+        group_rows = parties[name]
+        unpaid_sum = sum((_parse_amount_decimal(r.get("欠付款", "")) for r in group_rows), decimal.Decimal("0"))
+        summary_rows.append([name, len(group_rows), f"{unpaid_sum:.2f}", date_start or "-", date_end or "-"])
+
+    for row in summary_rows:
+        summary.append(row)
+
+    for ridx in range(2, 2 + len(summary_rows)):
+        summary.row_dimensions[ridx].height = 22
+        for cidx in range(1, 6):
+            c = summary.cell(row=ridx, column=cidx)
+            c.font = font_body
+            c.alignment = align_center if cidx != 3 else align_right
+
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+
+    filename = f"搜索结果导出_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    encoded_filename = quote(filename)
+    headers_resp = {"Content-Disposition": f"attachment; filename=export.xlsx; filename*=UTF-8''{encoded_filename}"}
+    return StreamingResponse(output, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers=headers_resp)
 
 def _resolve_source_file(source_file: str) -> str:
     if not source_file:

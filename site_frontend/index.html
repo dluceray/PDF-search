@@ -32,6 +32,7 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(0,122,255,.12);
 .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
 .btn.primary:hover{background:#1380ff}.btn.primary:active{background:var(--accent-press)}
 .btn.ok{background:#eef9f1;border-color:#d8f2df;color:#138a3b}
+.btn:disabled{opacity:.45;cursor:not-allowed;filter:grayscale(.15)}
 .kv{display:flex;align-items:center;gap:10px}
 .dot{width:8px;height:8px;border-radius:50%;background:#9aa0a6}.dot.ok{background:var(--ok)}
 .tableWrap{margin-top:16px;border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;background:#fff;box-shadow:var(--shadow)}
@@ -250,9 +251,17 @@ small.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospa
           <div><label>合同编号</label><input id="no" placeholder="精确或部分编号"/ autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" name="noauto-no"></div>
           <div><label>签订日期（年/年月/年月日）</label><input id="dt" placeholder="2025 或 2025-08"/ autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" name="noauto-dt"></div>
           <div><label>合同额（数值等价；填0=忽略）</label><input id="amt" placeholder="如：1000000 或 1,000,000"/ autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" name="noauto-amt"></div>
+          <div>
+            <label>欠付款筛选</label>
+            <div style="display:flex;gap:14px;align-items:center;min-height:32px;">
+              <label style="margin:0;display:flex;align-items:center;gap:6px;"><input type="checkbox" id="unpaidZero" checked/>已结清（绿色）</label>
+              <label style="margin:0;display:flex;align-items:center;gap:6px;"><input type="checkbox" id="unpaidNonZero" checked/>未结清（白色）</label>
+            </div>
+          </div>
         </div>
         <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
           <button class="btn ok" id="go">查询</button>
+          <button class="btn" id="btnExport" disabled>导出</button>
           <span class="badge" id="count">0 条</span>
 </div>
       </section>
@@ -344,8 +353,11 @@ function setLoginUI(ok){
       ["loc","unit","no","dt","amt"].forEach(function(id){
         var el=document.getElementById(id); if(el) el.value="";
       });
+      var z=document.getElementById("unpaidZero"); if(z) z.checked=true;
+      var nz=document.getElementById("unpaidNonZero"); if(nz) nz.checked=true;
       var tb=document.getElementById("tbody"); if(tb) tb.innerHTML="";
       var c=document.getElementById("count"); if(c) c.textContent="0 条";
+      var be=document.getElementById("btnExport"); if(be) be.disabled=true;
     }
   }catch(e){}
 $("#state").innerHTML = (ok?'<span class="dot ok"></span> 已登录':'<span class="dot"></span> 未登录');
@@ -534,6 +546,11 @@ function shouldHighlightPaid(row){
     || (paid != null && settle != null && Math.abs(paid - settle) < 0.0001);
   return paidMatches && isZeroish(getCellValue(row, "欠付款"));
 }
+function updateExportButton(enabled){
+  var btn = document.getElementById("btnExport");
+  if (!btn) return;
+  btn.disabled = !enabled;
+}
 async function loginPOST(pwd){ return fetch('/api/mdirs/login',{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({password:pwd})}); }
 async function loginGET(pwd){ return fetch('/api/mdirs/login?password='+encodeURIComponent(pwd)); }
 async function doLogin(pwd){
@@ -604,7 +621,9 @@ busy(true);
       "单位名称": $("#unit").value.trim(),
       "合同编号": $("#no").value.trim(),
       "签订日期": $("#dt").value.trim(),
-      "合同额": $("#amt").value.trim()
+      "合同额": $("#amt").value.trim(),
+      "欠付款为0": !!document.getElementById("unpaidZero")?.checked,
+      "欠付款不为0": !!document.getElementById("unpaidNonZero")?.checked
     };
 
 
@@ -613,7 +632,9 @@ busy(true);
       body:JSON.stringify(body)});
     if(r.status===401){ localStorage.removeItem('X_AUTH'); TOKEN=''; setLoginUI(false); toast("登录失效，请重新登录"); return; }
     const j=await r.json();
-    $("#count").textContent=((j.count_strict|0)||(j.count|0)||0)+" 条";
+    const total=((j.count_strict|0)||(j.count|0)||0);
+    $("#count").textContent=total+" 条";
+    updateExportButton(total>0);
     const tb=$("#tbody"); tb.innerHTML="";
     (j.items||[]).forEach(x=>{
       const indexValue = (x["序号"] ?? "").toString().trim();
@@ -642,8 +663,52 @@ busy(true);
         <td class="col-detail">${detailAction}</td>`;
       tb.appendChild(tr);
     });
-  }catch(e){ toast("请求失败"); }
+  }catch(e){ updateExportButton(false); toast("请求失败"); }
   finally{ busy(false); }
+};
+
+$("#btnExport").onclick = async ()=>{
+  const btn = document.getElementById("btnExport");
+  if (!btn || btn.disabled) return;
+  const body={
+    "工程地点及内容": $("#loc").value.trim(),
+    "单位名称": $("#unit").value.trim(),
+    "合同编号": $("#no").value.trim(),
+    "签订日期": $("#dt").value.trim(),
+    "合同额": $("#amt").value.trim(),
+    "欠付款为0": !!document.getElementById("unpaidZero")?.checked,
+    "欠付款不为0": !!document.getElementById("unpaidNonZero")?.checked
+  };
+  busy(true);
+  btn.disabled = true;
+  try{
+    const r = await fetch('/api/search/export',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','X-Auth': TOKEN},
+      body: JSON.stringify(body)
+    });
+    if(r.status===401){ localStorage.removeItem('X_AUTH'); TOKEN=''; setLoginUI(false); toast("登录失效，请重新登录"); return; }
+    if(!r.ok){ toast("导出失败"); return; }
+    const blob = await r.blob();
+    const cd = r.headers.get('content-disposition') || '';
+    const m = cd.match(/filename\*=UTF-8''([^;]+)/i);
+    const fname = m ? decodeURIComponent(m[1]) : ('搜索结果导出_' + Date.now() + '.xlsx');
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fname;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    toast("导出成功");
+  }catch(e){
+    toast("导出失败");
+  }finally{
+    busy(false);
+    const cnt = parseInt((document.getElementById("count")?.textContent || "0"), 10) || 0;
+    updateExportButton(cnt > 0);
+  }
 };
 const tbody = $("#tbody");
 if (tbody) {
