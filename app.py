@@ -635,7 +635,8 @@ def _collect_search_results(q: QueryIn):
 
     kw_loc = norm_text((q.工程地点及内容 or "").strip())
     kw_unit = norm_text((q.单位名称 or "").strip())
-    kw_no = norm_text((q.合同编号 or "").strip())
+    kw_no_raw = norm_text((q.合同编号 or "").strip())
+    kw_no_terms = [term.strip() for term in kw_no_raw.replace("，", ",").split(",") if term.strip()]
     raw_date_input = (q.签订日期 or "").strip()
     year_filter = _parse_year_filter_expr(raw_date_input)
     kw_date = ""
@@ -654,8 +655,8 @@ def _collect_search_results(q: QueryIn):
         text_filters.append(("工程地点及内容", kw_loc))
     if kw_unit:
         text_filters.append(("单位名称", kw_unit))
-    if kw_no:
-        text_filters.append(("合同编号_or_序号", kw_no))
+    if kw_no_terms:
+        text_filters.append(("合同编号_or_序号", kw_no_terms))
     if year_filter:
         text_filters.append(("签订年份", year_filter.get("years", set())))
     elif kw_date:
@@ -682,7 +683,7 @@ def _collect_search_results(q: QueryIn):
                     hits.append(val in norm_text(it.get("单位名称", "")))
                 elif kind == "合同编号_or_序号":
                     hay = norm_text(it.get("合同编号", "") or it.get("序号", ""))
-                    hits.append(val in hay)
+                    hits.append(any(term in hay for term in val))
                 elif kind == "签订日期_norm_prefix":
                     cur = _norm_in_date(it.get("签订日期_norm", "") or it.get("签订日期", ""))
                     hits.append(globals().get('_date_match', _date_match)(kw_date, cur))

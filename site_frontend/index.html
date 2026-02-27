@@ -157,6 +157,23 @@ small.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospa
 #searchCard .row{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
 #searchCard label{margin:4px 0 4px;font-size:11px;opacity:.75}
 #searchCard input{height:32px;padding:4px 10px;border-radius:10px}
+#searchCard .filter-options{display:flex;gap:12px;align-items:center;min-height:32px;flex-wrap:wrap}
+#searchCard .filter-options .filter-check{
+  margin:0;
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  white-space:nowrap;
+  font-size:13px;
+  color:#111;
+  opacity:.9;
+}
+#searchCard .filter-options .filter-check input{
+  width:16px;
+  height:16px;
+  margin:0;
+  padding:0;
+}
 
 /* 登录卡不受 3 列影响（仍两列） */
 #loginCard .row{grid-template-columns:1fr auto}
@@ -248,14 +265,14 @@ small.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospa
         <div class="row" style="margin-top:6px">
           <div><label>工程地点及内容</label><input id="loc" placeholder="例如：新区道路"/ autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" name="noauto-loc"></div>
           <div><label>单位名称</label><input id="unit" placeholder="例如：XX 建设"/ autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" name="noauto-unit"></div>
-          <div><label>合同编号</label><input id="no" placeholder="精确或部分编号"/ autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" name="noauto-no"></div>
+          <div><label>合同编号</label><input id="no" placeholder="支持多条件：24-gf,25-,005（逗号分隔，或关系）"/ autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" name="noauto-no"></div>
           <div><label>签订日期（支持年份集合）</label><input id="dt" placeholder="2025、2024,2025、2021,2023-2025、24,25、21,24-25 或 2025-08"/ autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" name="noauto-dt"></div>
           <div><label>合同额（数值等价；填0=忽略）</label><input id="amt" placeholder="如：1000000 或 1,000,000"/ autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" name="noauto-amt"></div>
           <div>
             <label>欠付款筛选</label>
-            <div style="display:flex;gap:14px;align-items:center;min-height:32px;">
-              <label style="margin:0;display:flex;align-items:center;gap:6px;"><input type="checkbox" id="unpaidNonZero" checked/>未结清</label>
-              <label style="margin:0;display:flex;align-items:center;gap:6px;"><input type="checkbox" id="unpaidZero" checked/>已结清</label>
+            <div class="filter-options">
+              <label class="filter-check"><input type="checkbox" id="unpaidNonZero" checked/>未结清</label>
+              <label class="filter-check"><input type="checkbox" id="unpaidZero" checked/>已结清</label>
             </div>
           </div>
         </div>
