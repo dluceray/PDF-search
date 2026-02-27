@@ -487,7 +487,9 @@ def _auto_update_loop() -> None:
                     _save_run_state(state)
         except Exception as exc:
             _auto_update_log(f"自动更新任务异常: {exc}")
-        time.sleep(30)
+        # 自动更新仅服务于夜间 23 点时段任务，不再每 30 秒轮询。
+        # 改为每 5 分钟检查一次，降低无效唤醒。
+        time.sleep(300)
 
 class QueryIn(BaseModel):
     工程地点及内容: Optional[str]=""
@@ -1211,4 +1213,5 @@ def do_login(password: str = Form(...)):
 
 
 AUTO_UPDATE_ENABLED = _load_auto_update_enabled()
-threading.Thread(target=_auto_update_loop, daemon=True).start()
+# 按需求关闭后台自动更新轮询线程（不再自动触发 23:00/23:30 任务）。
+# 如需执行更新，请使用手动维护接口 /api/maint/append。
