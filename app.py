@@ -466,15 +466,30 @@ def _run_update_script() -> None:
     except Exception as exc:
         _auto_update_log(f"更新脚本失败: {exc}")
 
+def _seconds_until_next_update_window(now: datetime.datetime) -> int:
+    today_2300 = now.replace(hour=23, minute=0, second=0, microsecond=0)
+    today_2330 = now.replace(hour=23, minute=30, second=0, microsecond=0)
+
+    if now < today_2300:
+        target = today_2300
+    elif now < today_2330:
+        target = today_2330
+    else:
+        target = today_2300 + datetime.timedelta(days=1)
+
+    return max(30, int((target - now).total_seconds()))
+
+
 def _auto_update_loop() -> None:
     while True:
+        sleep_seconds = 300
         try:
             if _get_auto_update_enabled():
                 now = datetime.datetime.now()
                 today = now.strftime("%Y-%m-%d")
                 state = _load_run_state()
 
-                if now.hour == 23 and now.minute >= 0 and state.get("copy_date") != today:
+                if now.hour == 23 and state.get("copy_date") != today:
                     _auto_update_log("开始检查 pending 目录变更")
                     _copy_pending_changes()
                     state["copy_date"] = today
@@ -485,9 +500,11 @@ def _auto_update_loop() -> None:
                     _run_update_script()
                     state["update_date"] = today
                     _save_run_state(state)
+
+                sleep_seconds = _seconds_until_next_update_window(now)
         except Exception as exc:
             _auto_update_log(f"自动更新任务异常: {exc}")
-        # 自动更新仅服务于夜间 23 点时段任务，不再每 30 秒轮询。
+        time.sleep(sleep_seconds)
         # 改为每 5 分钟检查一次，降低无效唤醒。
         time.sleep(300)
 
