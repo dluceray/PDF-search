@@ -544,6 +544,82 @@ def _is_settled_row(row: dict) -> bool:
     return paid_matches and unpaid == 0
 
 
+def _expand_two_digit_year(year_text: str) -> Optional[int]:
+    t = (year_text or "").strip()
+    if not t.isdigit():
+        return None
+    if len(t) == 4:
+        y = int(t)
+    elif len(t) == 2:
+        y = 2000 + int(t)
+    else:
+        return None
+    if 1900 <= y <= 2100:
+        return y
+    return None
+
+
+def _normalize_year_ranges(years: List[int]) -> str:
+    if not years:
+        return ""
+    sorted_years = sorted(set(years))
+    ranges = []
+    start = end = sorted_years[0]
+    for y in sorted_years[1:]:
+        if y == end + 1:
+            end = y
+            continue
+        ranges.append((start, end))
+        start = end = y
+    ranges.append((start, end))
+    parts = [str(a) if a == b else f"{a}-{b}" for a, b in ranges]
+    return ",".join(parts)
+
+
+def _parse_year_filter_expr(expr: str) -> Optional[Dict]:
+    raw = (expr or "").strip()
+    if not raw:
+        return None
+    # 保留原有日期能力：单值且形如 YYYY-MM/ YYYY-M 的输入优先按年月处理
+    if "," not in raw and "，" not in raw:
+        ym = re.match(r"^\s*(\d{4})\s*-\s*(\d{1,2})\s*$", raw)
+        if ym and 1 <= int(ym.group(2)) <= 12:
+            return None
+    tokens = [t.strip() for t in re.split(r"[,，]+", raw) if t.strip()]
+    if not tokens:
+        return None
+
+    years = set()
+    for token in tokens:
+        if "-" in token:
+            segs = [s.strip() for s in token.split("-")]
+            if len(segs) != 2:
+                return None
+            start = _expand_two_digit_year(segs[0])
+            end = _expand_two_digit_year(segs[1])
+            if start is None or end is None:
+                return None
+            if start > end:
+                start, end = end, start
+            years.update(range(start, end + 1))
+        else:
+            y = _expand_two_digit_year(token)
+            if y is None:
+                return None
+            years.add(y)
+
+    if not years:
+        return None
+
+    normalized = _normalize_year_ranges(sorted(years))
+    span_count = len(normalized.split(",")) if normalized else 0
+    return {
+        "years": years,
+        "normalized": normalized,
+        "continuous": span_count <= 1,
+    }
+
+
 def _collect_search_results(q: QueryIn):
     # 读取配置/覆盖
     ci = q.case_insensitive if q.case_insensitive is not None else CONFIG.get("case_insensitive", True)
@@ -560,11 +636,13 @@ def _collect_search_results(q: QueryIn):
     kw_loc = norm_text((q.工程地点及内容 or "").strip())
     kw_unit = norm_text((q.单位名称 or "").strip())
     kw_no = norm_text((q.合同编号 or "").strip())
-    kw_date = _norm_in_date_std(q.签订日期 or "")
-    if isinstance(kw_date, str) and kw_date.isdigit() and len(kw_date) == 4:
-        kw_date = kw_date + "-"
-    if isinstance(kw_date, str) and kw_date.isdigit() and len(kw_date) == 4:
-        kw_date = kw_date + "-"   # 年/年月/年月日 → 前缀匹配
+    raw_date_input = (q.签订日期 or "").strip()
+    year_filter = _parse_year_filter_expr(raw_date_input)
+    kw_date = ""
+    if not year_filter:
+        kw_date = _norm_in_date_std(raw_date_input)
+        if isinstance(kw_date, str) and kw_date.isdigit() and len(kw_date) == 4:
+            kw_date = kw_date + "-"   # 年/年月/年月日 → 前缀匹配
     kw_amt = _normalize_amount_to_decimal((q.合同额 or "").strip()) if amt_numeric else None
 
     include_unpaid_zero = q.欠付款为0 if q.欠付款为0 is not None else True
@@ -578,7 +656,9 @@ def _collect_search_results(q: QueryIn):
         text_filters.append(("单位名称", kw_unit))
     if kw_no:
         text_filters.append(("合同编号_or_序号", kw_no))
-    if kw_date:
+    if year_filter:
+        text_filters.append(("签订年份", year_filter.get("years", set())))
+    elif kw_date:
         text_filters.append(("签订日期_norm_prefix", kw_date))
 
     for it in data:
@@ -606,6 +686,10 @@ def _collect_search_results(q: QueryIn):
                 elif kind == "签订日期_norm_prefix":
                     cur = _norm_in_date(it.get("签订日期_norm", "") or it.get("签订日期", ""))
                     hits.append(globals().get('_date_match', _date_match)(kw_date, cur))
+                elif kind == "签订年份":
+                    cur = _norm_in_date_std(it.get("签订日期_norm", "") or it.get("签订日期", ""))
+                    row_year = int(cur[:4]) if len(cur) >= 4 and cur[:4].isdigit() else None
+                    hits.append(row_year in val if row_year is not None else False)
             if text_or:
                 if not any(hits):
                     ok = False
@@ -625,7 +709,7 @@ def _collect_search_results(q: QueryIn):
         item["__row_index"] = it.get("__row_index", 0)
         res.append(item)
 
-    return res, kw_date
+    return res, kw_date, year_filter
 
 class AutoUpdateToggleIn(BaseModel):
     enabled: bool
@@ -658,10 +742,10 @@ def reload_cfg(body: ReloadIn, x_auth: str = Header(None)):
 
 @app.post("/api/search", dependencies=[Depends(require_auth)])
 def search(q: QueryIn, x_auth: str = Header(None)):
-    res, kw_date = _collect_search_results(q)
+    res, kw_date, year_filter = _collect_search_results(q)
 
     off=max(0, int(q.offset or 0)); lim=min(200, max(1, int(q.limit or 50)))
-    return {"count": len(res), "count_strict": sum(1 for _it in res if str(_it.get("序号","")).strip()), "items": res[off:off+lim], "offset": off, "limit": lim, "debug": {"kw_date": kw_date, "sample_cur": [(_norm_in_date(it.get("签订日期_norm","") or it.get("签订日期",""))) for it in res[:5]]}}  # DEBUG_DATE_SNIPPET
+    return {"count": len(res), "count_strict": sum(1 for _it in res if str(_it.get("序号","")).strip()), "items": res[off:off+lim], "offset": off, "limit": lim, "debug": {"kw_date": kw_date, "year_filter": (year_filter or {}).get("normalized", ""), "sample_cur": [(_norm_in_date(it.get("签订日期_norm","") or it.get("签订日期",""))) for it in res[:5]]}}  # DEBUG_DATE_SNIPPET
 
 
 @app.post("/api/search/export", dependencies=[Depends(require_auth)])
@@ -669,7 +753,7 @@ def search_export(q: QueryIn):
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Font, PatternFill
 
-    rows, kw_date = _collect_search_results(q)
+    rows, kw_date, year_filter = _collect_search_results(q)
 
     wb = Workbook()
     ws = wb.active
@@ -756,6 +840,9 @@ def search_export(q: QueryIn):
     date_values = [d for d in date_values if d]
     date_start = min(date_values) if date_values else (kw_date or "-")
     date_end = max(date_values) if date_values else (kw_date or "-")
+    if year_filter and not year_filter.get("continuous", True):
+        date_start = f"按年份筛选: {year_filter.get('normalized', '')}"
+        date_end = "非连续年份"
 
     summary_rows = []
     for name in ["总计", "国丰", "华腾", "蝶泉", "其他"]:
