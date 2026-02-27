@@ -249,13 +249,13 @@ small.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospa
           <div><label>工程地点及内容</label><input id="loc" placeholder="例如：新区道路"/ autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" name="noauto-loc"></div>
           <div><label>单位名称</label><input id="unit" placeholder="例如：XX 建设"/ autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" name="noauto-unit"></div>
           <div><label>合同编号</label><input id="no" placeholder="精确或部分编号"/ autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" name="noauto-no"></div>
-          <div><label>签订日期（年/年月/年月日）</label><input id="dt" placeholder="2025 或 2025-08"/ autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" name="noauto-dt"></div>
+          <div><label>签订日期（支持年份集合）</label><input id="dt" placeholder="2025、2024,2025、2021,2023-2025、24,25、21,24-25 或 2025-08"/ autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" name="noauto-dt"></div>
           <div><label>合同额（数值等价；填0=忽略）</label><input id="amt" placeholder="如：1000000 或 1,000,000"/ autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" name="noauto-amt"></div>
           <div>
             <label>欠付款筛选</label>
             <div style="display:flex;gap:14px;align-items:center;min-height:32px;">
-              <label style="margin:0;display:flex;align-items:center;gap:6px;"><input type="checkbox" id="unpaidNonZero" checked/>未结清（白色）</label>
-              <label style="margin:0;display:flex;align-items:center;gap:6px;"><input type="checkbox" id="unpaidZero" checked/>已结清（绿色）</label>
+              <label style="margin:0;display:flex;align-items:center;gap:6px;"><input type="checkbox" id="unpaidNonZero" checked/>未结清</label>
+              <label style="margin:0;display:flex;align-items:center;gap:6px;"><input type="checkbox" id="unpaidZero" checked/>已结清</label>
             </div>
           </div>
         </div>
