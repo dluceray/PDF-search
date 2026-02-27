@@ -43,11 +43,20 @@ def ts(): return datetime.now().strftime("%Y%m%d%H%M%S")
 def header_equal(a,b): return len(a)==len(b) and all((a[i]==b[i]) for i in range(len(a)))
 def _ingest_log_path() -> Path:
     return Path("/tmp/ingest_excels.log")
+def _failed_log_path() -> Path:
+    return Path("/tmp/ingest_excels_failed.log")
 def _log(msg: str) -> None:
     try:
         _ingest_log_path().parent.mkdir(parents=True, exist_ok=True)
         with _ingest_log_path().open("a", encoding="utf-8") as f:
             f.write(f"[{datetime.now().strftime('%F %T')}] {msg}\n")
+    except Exception:
+        pass
+def _log_failed_file(file_name: str, reason: str) -> None:
+    try:
+        _failed_log_path().parent.mkdir(parents=True, exist_ok=True)
+        with _failed_log_path().open("a", encoding="utf-8") as f:
+            f.write(f"[{datetime.now().strftime('%F %T')}] file={file_name} reason={reason}\n")
     except Exception:
         pass
 def normalize_header_cells(row):
@@ -448,7 +457,7 @@ def load_pending_rows(xlsx_path: Path, header_mode: str):
                 import xlrd  # 1.2.0
             except Exception:
                 _log("xls missing xlrd==1.2.0")
-                return False, "处理 .xls 需要安装 xlrd==1.2.0", [], []
+                return False, "处理 .xls 需要安装 xlrd==1.2.0", [], [], []
             book = xlrd.open_workbook(xlsx_path, formatting_info=False)
             _log(f"xlrd loaded sheets={book.nsheets} names={[book.sheet_by_index(i).name for i in range(book.nsheets)]}")
             for si in range(book.nsheets):
@@ -481,23 +490,27 @@ def load_pending_rows(xlsx_path: Path, header_mode: str):
                     added_rows += 1
                 _log(f"sheet={sh.name} rows_added={added_rows}")
         else:
-            return False, "不支持的扩展名（仅 .xlsx/.xls）", [], []
+            return False, "不支持的扩展名（仅 .xlsx/.xls）", [], [], []
     except Exception as e:
         _log(f"load_pending_rows exception={e!r}")
-        return False, f"无法读取Excel: {e}", [], []
+        return False, f"无法读取Excel: {e}", [], [], []
 
-    if errors:
+    if errors and not rows_out:
         _log(f"load_pending_rows failed errors={errors}")
-        return False, "以下工作表不符合要求（全部中止处理）：" + "; ".join(errors), [], []
+        return False, "以下工作表不符合要求（全部中止处理）：" + "; ".join(errors), [], [], errors
+    if errors:
+        _log(f"load_pending_rows partial_success errors={errors} rows_out={len(rows_out)}")
     _log(f"load_pending_rows done file={xlsx_path} rows_out={len(rows_out)} headers_seen={headers_seen}")
-    return True, "", rows_out, headers_seen
+    return True, "", rows_out, headers_seen, errors
 
 
 def process_file(xlsx: Path, root: Path, header_mode: str):
     res={"file": xlsx.name, "added":0, "updated":0, "skipped":0, "invalid":0, "details":[]}
-    ok, why, rows, headers_seen = load_pending_rows(xlsx, header_mode)
+    ok, why, rows, headers_seen, sheet_errors = load_pending_rows(xlsx, header_mode)
     _log(f"process_file file={xlsx} ok={ok} rows={len(rows)} headers_seen={headers_seen}")
     if not ok: return {"file": xlsx.name, "__file_failed__": True, "reason": why}
+    if sheet_errors:
+        res["sheet_errors"] = sheet_errors
     buckets: Dict[int, List[Dict]] = {}
     for r in rows:
         seq = "" if r.get("序号") is None else str(r.get("序号")).strip()
@@ -589,8 +602,13 @@ def main():
             res=process_file(f, root, args.header_row)
             if res.get("__file_failed__"):
                 error.mkdir(parents=True, exist_ok=True); shutil.move(str(f), str(error/f.name))
-                if res.get("reason"): (error/(f.name + ".reason.txt")).write_text(res["reason"], encoding="utf-8")
+                if res.get("reason"):
+                    (error/(f.name + ".reason.txt")).write_text(res["reason"], encoding="utf-8")
+                    _log_failed_file(f.name, res["reason"])
                 total["files_failed"]+=1; total["per_file"].append(res); continue
+            if res.get("sheet_errors"):
+                error.mkdir(parents=True, exist_ok=True)
+                (error/(f.name + ".sheet_errors.txt")).write_text("\n".join(res["sheet_errors"]), encoding="utf-8")
             done.mkdir(parents=True, exist_ok=True); shutil.move(str(f), str(done/f.name))
             total["files_processed"]+=1
             total["rows_added"]+=res["added"]; total["rows_updated"]+=res["updated"]; total["rows_skipped"]+=res["skipped"]; total["rows_invalid"]+=res["invalid"]
