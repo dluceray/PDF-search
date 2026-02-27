@@ -1213,5 +1213,4 @@ def do_login(password: str = Form(...)):
 
 
 AUTO_UPDATE_ENABLED = _load_auto_update_enabled()
-# 按需求关闭后台自动更新轮询线程（不再自动触发 23:00/23:30 任务）。
-# 如需执行更新，请使用手动维护接口 /api/maint/append。
+threading.Thread(target=_auto_update_loop, daemon=True).start()
