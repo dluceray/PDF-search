@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>合同检索Kr · PDF Search</title>
+<title>合同管理系统 · PDF Search</title>
 <style>
 :root{
   --bg:#ffffff; --card:#ffffff; --text:#111; --sub:#5f6368; --line:#e5e5ea;
@@ -32,32 +32,104 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(0,122,255,.12);
 .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
 .btn.primary:hover{background:#1380ff}.btn.primary:active{background:var(--accent-press)}
 .btn.ok{background:#eef9f1;border-color:#d8f2df;color:#138a3b}
+.btn:disabled{opacity:.45;cursor:not-allowed;filter:grayscale(.15)}
 .kv{display:flex;align-items:center;gap:10px}
 .dot{width:8px;height:8px;border-radius:50%;background:#9aa0a6}.dot.ok{background:var(--ok)}
 .tableWrap{margin-top:16px;border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;background:#fff;box-shadow:var(--shadow)}
-table{width:100%;border-collapse:collapse}
+table{width:100%;border-collapse:collapse;table-layout:fixed}
 thead th{position:sticky;top:0;background:#fafafa;border-bottom:1px solid var(--line);font-weight:600;font-size:12px;color:#3c3c43;opacity:.9}
 th,td{padding:10px 12px;border-bottom:1px solid #f0f0f0;vertical-align:top}
+td{font-size:13px}
 tbody tr:hover{background:#fafcff}
-td.clip{max-width:280px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+td.clip{
+  max-width:280px;
+  white-space:normal;
+  word-break:break-word;
+}
+.cell-clip{
+  display:-webkit-box;
+  -webkit-box-orient:vertical;
+  -webkit-line-clamp:2;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+td.cell-wrap{white-space:normal;word-break:break-word}
+td.cell-clamp{
+  display:-webkit-box;
+  -webkit-box-orient:vertical;
+  -webkit-line-clamp:3;
+  overflow:hidden;
+}
+col.col-index,th.col-index,td.col-index{width:64px;text-align:center}
+col.col-date,th.col-date,td.col-date{width:88px;text-align:center}
+col.col-num,th.col-num,td.col-num{width:80px;text-align:right;font-variant-numeric:tabular-nums}
+col.col-pdf,th.col-pdf,td.col-pdf{width:140px;text-align:center}
+col.col-detail,th.col-detail,td.col-detail{width:90px;text-align:center}
+col.col-loc,th.col-loc,td.col-loc{width:140px}
+col.col-unit,th.col-unit,td.col-unit{width:130px}
+tbody tr.row-paid-ok{background:#f2faf3}
+tbody tr.row-paid-ok:hover{background:#eaf6ee}
 a.link{color:var(--accent);text-decoration:none}a.link:hover{text-decoration:underline}
+.detail-btn{
+  display:inline-flex;align-items:center;justify-content:center;
+  height:30px;padding:0 10px;border-radius:999px;border:1px solid #111;background:#111;color:#fff;
+  font-size:12px;cursor:pointer;transition:transform .12s,background .12s;
+}
+.detail-btn:hover{background:#222}
+.detail-btn:active{transform:translateY(1px)}
+.detail-backdrop{
+  position:fixed;inset:0;background:rgba(15,23,42,.45);display:none;align-items:center;justify-content:center;
+  padding:20px;z-index:1000;
+}
+.detail-backdrop.show{display:flex}
+.detail-modal{
+  width:min(980px, 96vw);max-height:90vh;background:#fff;border-radius:16px;border:1px solid #e5e7eb;
+  box-shadow:0 24px 60px rgba(15,23,42,.2);display:flex;flex-direction:column;overflow:hidden;
+}
+.detail-header{padding:16px 20px;border-bottom:1px solid #eef2f7;display:flex;justify-content:space-between;align-items:center}
+.detail-title{font-size:16px;font-weight:700}
+.detail-body{padding:16px 20px 24px;overflow:auto}
+.detail-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px 16px}
+.detail-item{background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:10px 12px;min-height:72px}
+.detail-item .label{font-size:12px;color:#64748b;margin-bottom:6px}
+.detail-item .value{font-size:13px;color:#0f172a;word-break:break-word;white-space:pre-wrap}
+.detail-remark{margin-top:18px}
+.detail-remark label{font-size:12px;color:#64748b;margin-bottom:6px}
+.detail-remark textarea{
+  width:100%;min-height:110px;resize:vertical;border-radius:12px;border:1px solid #d1d5db;
+  padding:10px 12px;font:13px/1.6 var(--font);background:#fff;outline:none;
+}
+.detail-remark textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(0,122,255,.12)}
+.detail-footer{
+  padding:12px 20px;border-top:1px solid #eef2f7;background:#fff;display:flex;justify-content:flex-end;gap:8px;
+  position:sticky;bottom:0;align-items:center;
+}
+.detail-footer .detail-pdf-actions{margin-right:auto}
 .note{color:#8e8e93;font-size:12px;margin-top:6px}
 small.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;color:#6b7280}
 .toast{position:fixed;right:16px;bottom:16px;background:#fff;border:1px solid var(--line);padding:10px 12px;border-radius:12px;box-shadow:var(--shadow);opacity:0;transform:translateY(8px);transition:.2s}
 .toast.show{opacity:1;transform:translateY(0)}
 .spinner{width:16px;height:16px;border-radius:999px;border:2px solid #e5e5ea;border-top-color:var(--accent);animation:spin 1s linear infinite}
+.auto-update{display:inline-flex;align-items:center;gap:8px;margin-left:10px;font-size:12px;color:#3c3c43}
+.auto-update .switch{position:relative;display:inline-block;width:38px;height:22px}
+.auto-update .switch input{opacity:0;width:0;height:0}
+.auto-update .slider{position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:#cbd5e1;transition:.2s;border-radius:999px}
+.auto-update .slider:before{position:absolute;content:"";height:18px;width:18px;left:2px;top:2px;background:white;transition:.2s;border-radius:50%;box-shadow:0 1px 3px rgba(0,0,0,.2)}
+.auto-update .switch input:checked + .slider{background:#4ade80}
+.auto-update .switch input:checked + .slider:before{transform:translateX(16px)}
+.auto-update-label{white-space:nowrap}
 @keyframes spin{to{transform:rotate(360deg)}}
 </style>
 
   <style id="FE_BTN_STYLE">
   .action-bar{
-    display:inline-flex; gap:.4rem; align-items:center;
+    display:inline-flex; gap:.3rem; align-items:center;
     flex-wrap:nowrap; white-space:nowrap; vertical-align:middle;
   }
   .btn-open,.btn-download{
     display:inline-flex; align-items:center; justify-content:center;
-    padding:.28rem .62rem; border-radius:9999px;
-    font-size:13px; line-height:1.1; letter-spacing:.02em;
+    padding:.24rem .54rem; border-radius:9999px;
+    font-size:12px; line-height:1.1; letter-spacing:.01em;
     border:1px solid #111; text-decoration:none; user-select:none;
     transition:background .15s ease, transform .06s ease, filter .15s ease;
   }
@@ -105,7 +177,7 @@ small.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospa
   #searchCard input{height:30px}
   .container{margin:18px auto;padding:0 12px}
   .card{padding:10px}
-  table{min-width:720px} /* 允许左右滑 */
+  table{min-width:820px} /* 允许左右滑 */
 }
 </style>
 
@@ -136,9 +208,19 @@ small.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospa
   <div class="container">
     <div class="header">
       <div>
-        <div class="h1">合同检索</div>
+        <div class="h1">物资部合同管理系统</div>
       </div>
-      <div class="kv"><div class="spinner" id="spin" style="display:none"></div><span id="state" class="badge"><span class="dot" id="d"></span> 未登录</span></div>
+      <div class="kv">
+        <div class="spinner" id="spin" style="display:none"></div>
+        <span id="state" class="badge"><span class="dot" id="d"></span> 未登录</span>
+        <div class="auto-update" id="autoUpdateWrap" style="display:none">
+          <label class="switch" title="自动更新">
+            <input type="checkbox" id="autoUpdateToggle" />
+            <span class="slider"></span>
+          </label>
+          <span class="auto-update-label">自动更新</span>
+        </div>
+      </div>
     </div>
 
     <div class="grid">
@@ -169,9 +251,17 @@ small.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospa
           <div><label>合同编号</label><input id="no" placeholder="精确或部分编号"/ autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" name="noauto-no"></div>
           <div><label>签订日期（年/年月/年月日）</label><input id="dt" placeholder="2025 或 2025-08"/ autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" name="noauto-dt"></div>
           <div><label>合同额（数值等价；填0=忽略）</label><input id="amt" placeholder="如：1000000 或 1,000,000"/ autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" name="noauto-amt"></div>
+          <div>
+            <label>欠付款筛选</label>
+            <div style="display:flex;gap:14px;align-items:center;min-height:32px;">
+              <label style="margin:0;display:flex;align-items:center;gap:6px;"><input type="checkbox" id="unpaidZero" checked/>已结清（绿色）</label>
+              <label style="margin:0;display:flex;align-items:center;gap:6px;"><input type="checkbox" id="unpaidNonZero" checked/>未结清（白色）</label>
+            </div>
+          </div>
         </div>
         <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
           <button class="btn ok" id="go">查询</button>
+          <button class="btn" id="btnExport" disabled>导出</button>
           <span class="badge" id="count">0 条</span>
 </div>
       </section>
@@ -180,17 +270,58 @@ small.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospa
     <!-- 表格 -->
     <div class="tableWrap" id="tableWrap" style="display:none">
       <table>
+        <colgroup>
+          <col class="col-index"/>
+          <col class="col-loc"/>
+          <col class="col-unit"/>
+          <col class="col-date"/>
+          <col class="col-num"/>
+          <col class="col-num"/>
+          <col class="col-num"/>
+          <col class="col-num"/>
+          <col class="col-pdf"/>
+          <col class="col-detail"/>
+        </colgroup>
         <thead>
           <tr>
-            <th style="width:80px">序号</th>
-            <th>工程地点及内容</th>
-            <th>单位名称</th>
-            <th style="width:120px">签订日期</th>
-            <th style="width:110px">合同额</th><th style="width:80px">PDF</th>
+            <th class="col-index">序号</th>
+            <th class="col-loc">工程地点及内容</th>
+            <th class="col-unit">单位名称</th>
+            <th class="col-date">签订日期</th>
+            <th class="col-num">合同额</th>
+            <th class="col-num">结算值</th>
+            <th class="col-num">已付款</th>
+            <th class="col-num">欠付款</th>
+            <th class="col-pdf">PDF</th>
+            <th class="col-detail">详情</th>
           </tr>
         </thead>
         <tbody id="tbody"></tbody>
       </table>
+    </div>
+  </div>
+
+  <div class="detail-backdrop" id="detailBackdrop" aria-hidden="true">
+    <div class="detail-modal" role="dialog" aria-modal="true" aria-labelledby="detailTitle">
+      <div class="detail-header">
+        <div class="detail-title" id="detailTitle">详情</div>
+        <div class="sub" id="detailSubtitle"></div>
+      </div>
+      <div class="detail-body">
+        <div class="detail-grid" id="detailGrid"></div>
+        <div class="detail-remark">
+          <label for="detailRemark">备注</label>
+          <textarea id="detailRemark" placeholder="填写备注..."></textarea>
+        </div>
+      </div>
+      <div class="detail-footer">
+        <div class="action-bar detail-pdf-actions">
+          <a class="btn-open" id="detailOpen" href="#" target="_blank" rel="noopener"><span class="ico">↗</span>打开</a>
+          <a class="btn-download" id="detailDownload" href="#" target="_blank" rel="noopener" download><span class="ico">⬇</span>下载</a>
+        </div>
+        <button class="btn primary" id="detailSave">保存</button>
+        <button class="btn" id="detailClose">关闭</button>
+      </div>
     </div>
   </div>
 
@@ -199,6 +330,19 @@ small.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospa
 <script>
 const $=s=>document.querySelector(s);
 let TOKEN = localStorage.getItem('X_AUTH') || '';
+function escapeAttr(text){
+  return String(text || "")
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+function escapeHtml(text){
+  return String(text || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
 function toast(t){const el=$("#toast"); el.textContent=t; el.classList.add('show'); setTimeout(()=>el.classList.remove('show'), 2000);}
 function busy(on){ $("#spin").style.display=on?'inline-block':'none'; }
 function setLoginUI(ok){
@@ -209,14 +353,203 @@ function setLoginUI(ok){
       ["loc","unit","no","dt","amt"].forEach(function(id){
         var el=document.getElementById(id); if(el) el.value="";
       });
+      var z=document.getElementById("unpaidZero"); if(z) z.checked=true;
+      var nz=document.getElementById("unpaidNonZero"); if(nz) nz.checked=true;
       var tb=document.getElementById("tbody"); if(tb) tb.innerHTML="";
       var c=document.getElementById("count"); if(c) c.textContent="0 条";
+      var be=document.getElementById("btnExport"); if(be) be.disabled=true;
     }
   }catch(e){}
 $("#state").innerHTML = (ok?'<span class="dot ok"></span> 已登录':'<span class="dot"></span> 未登录');
   $("#loginCard").style.display = ok ? "none" : "block";
   $("#searchCard").style.display = ok ? "block" : "none";
   $("#tableWrap").style.display = ok ? "block" : "none";
+  const autoWrap = $("#autoUpdateWrap");
+  if (autoWrap) autoWrap.style.display = ok ? "inline-flex" : "none";
+  if (ok) {
+    fetchAutoUpdateStatus();
+  }
+}
+const detailBackdrop = $("#detailBackdrop");
+const detailGrid = $("#detailGrid");
+const detailRemark = $("#detailRemark");
+const detailSaveBtn = $("#detailSave");
+const detailCloseBtn = $("#detailClose");
+const detailSubtitle = $("#detailSubtitle");
+const detailOpenBtn = $("#detailOpen");
+const detailDownloadBtn = $("#detailDownload");
+let detailContext = null;
+
+function openDetailModal(){
+  if (!detailBackdrop) return;
+  detailBackdrop.classList.add("show");
+  detailBackdrop.setAttribute("aria-hidden", "false");
+  document.body.style.overflow = "hidden";
+}
+function closeDetailModal(){
+  if (!detailBackdrop) return;
+  detailBackdrop.classList.remove("show");
+  detailBackdrop.setAttribute("aria-hidden", "true");
+  document.body.style.overflow = "";
+  detailContext = null;
+}
+function updateDetailPdfLinks(context){
+  const pdfPath = context && context.pdf_path ? String(context.pdf_path) : "";
+  const pdfDl = context && context.pdf_dl ? String(context.pdf_dl) : "";
+
+  if (detailOpenBtn) {
+    if (pdfPath) {
+      detailOpenBtn.href = pdfPath;
+      detailOpenBtn.hidden = false;
+    } else {
+      detailOpenBtn.removeAttribute("href");
+      detailOpenBtn.hidden = true;
+    }
+  }
+  if (detailDownloadBtn) {
+    if (pdfDl) {
+      detailDownloadBtn.href = pdfDl;
+      detailDownloadBtn.hidden = false;
+    } else {
+      detailDownloadBtn.removeAttribute("href");
+      detailDownloadBtn.hidden = true;
+    }
+  }
+}
+function renderDetailFields(fields){
+  if (!detailGrid) return;
+  detailGrid.innerHTML = "";
+  if (!fields || !fields.length) {
+    const empty = document.createElement("div");
+    empty.className = "detail-item";
+    empty.innerHTML = `<div class="label">提示</div><div class="value">暂无可展示的字段</div>`;
+    detailGrid.appendChild(empty);
+    return;
+  }
+  fields.forEach(field=>{
+    const item = document.createElement("div");
+    item.className = "detail-item";
+    const label = document.createElement("div");
+    label.className = "label";
+    label.textContent = field.label || "";
+    const value = document.createElement("div");
+    value.className = "value";
+    value.textContent = field.value || "";
+    item.appendChild(label);
+    item.appendChild(value);
+    detailGrid.appendChild(item);
+  });
+}
+async function loadDetailModal(sourceFile, rowIndex, subtitle, pdfPath, pdfDl){
+  if (!sourceFile || !rowIndex) {
+    toast("缺少详情信息");
+    return;
+  }
+  detailContext = { sourceFile, rowIndex, pdf_path: pdfPath || "", pdf_dl: pdfDl || "" };
+  if (detailSubtitle) detailSubtitle.textContent = subtitle ? `序号：${subtitle}` : "";
+  if (detailRemark) detailRemark.value = "";
+  if (detailRemark) detailRemark.placeholder = "填写备注...";
+  renderDetailFields([]);
+  updateDetailPdfLinks(detailContext);
+  openDetailModal();
+  try{
+    const r = await fetch('/api/entry/detail', {
+      method:'POST',
+      headers:{'Content-Type':'application/json','X-Auth': TOKEN},
+      body: JSON.stringify({source_file: sourceFile, row_index: rowIndex})
+    });
+    if(r.status===401){ localStorage.removeItem('X_AUTH'); TOKEN=''; setLoginUI(false); toast("登录失效，请重新登录"); closeDetailModal(); return; }
+    const j = await r.json();
+    if(!r.ok || !j || !j.ok){ toast((j && j.detail) || "详情加载失败"); return; }
+    renderDetailFields(j.fields || []);
+    if (detailRemark) detailRemark.value = j.remark || "";
+    if (detailRemark && !j.has_remark_column) {
+      detailRemark.placeholder = "目录中没有备注列，保存时将自动创建";
+    }
+  }catch(e){
+    toast("详情加载失败");
+  }
+}
+if (detailCloseBtn) detailCloseBtn.addEventListener("click", closeDetailModal);
+if (detailBackdrop) {
+  detailBackdrop.addEventListener("click", function(e){
+    if (e.target === detailBackdrop) closeDetailModal();
+  });
+}
+document.addEventListener("keydown", function(e){
+  if (e.key === "Escape" && detailBackdrop && detailBackdrop.classList.contains("show")) {
+    closeDetailModal();
+  }
+});
+if (detailSaveBtn) {
+  detailSaveBtn.addEventListener("click", async function(){
+    if (!detailContext) return;
+    detailSaveBtn.disabled = true;
+    try{
+      const r = await fetch('/api/entry/remark', {
+        method:'POST',
+        headers:{'Content-Type':'application/json','X-Auth': TOKEN},
+        body: JSON.stringify({
+          source_file: detailContext.sourceFile,
+          row_index: detailContext.rowIndex,
+          remark: detailRemark ? detailRemark.value : ""
+        })
+      });
+      if(r.status===401){ localStorage.removeItem('X_AUTH'); TOKEN=''; setLoginUI(false); toast("登录失效，请重新登录"); closeDetailModal(); return; }
+      const j = await r.json().catch(()=>({}));
+      if(!r.ok || !j || !j.ok){ toast((j && j.detail) || "保存失败"); return; }
+      if (j.updated === false) {
+        toast("备注未变更");
+      } else {
+        toast("备注已保存");
+      }
+    }catch(e){
+      toast("保存失败");
+    }finally{
+      detailSaveBtn.disabled = false;
+    }
+  });
+}
+async function fetchAutoUpdateStatus(){
+  if (!TOKEN) return;
+  try{
+    const r = await fetch('/api/auto-update/status',{headers:{'X-Auth': TOKEN}});
+    if(r.status===401){ localStorage.removeItem('X_AUTH'); TOKEN=''; setLoginUI(false); toast("登录失效，请重新登录"); return; }
+    const j = await r.json();
+    const el = $("#autoUpdateToggle");
+    if (el) el.checked = !!j.enabled;
+  }catch(e){ /* ignore */ }
+}
+function getCellValue(row, key){
+  if (!row || row[key] == null) return "";
+  return row[key];
+}
+function toNumber(value){
+  if (value == null) return null;
+  const text = String(value).replace(/[\s,]/g, "").replace(/[￥$]/g, "");
+  if (!text) return null;
+  const num = Number.parseFloat(text);
+  return Number.isNaN(num) ? null : num;
+}
+function isZeroish(value){
+  if (value == null) return true;
+  const raw = String(value).trim();
+  if (!raw) return true;
+  const num = toNumber(raw);
+  return num !== null && Math.abs(num) < 0.0001;
+}
+function shouldHighlightPaid(row){
+  const paid = toNumber(getCellValue(row, "已付款"));
+  const contract = toNumber(getCellValue(row, "合同额"));
+  const settle = toNumber(getCellValue(row, "结算值"));
+  const paidMatches = (paid != null && contract != null && Math.abs(paid - contract) < 0.0001)
+    || (paid != null && settle != null && Math.abs(paid - settle) < 0.0001);
+  return paidMatches && isZeroish(getCellValue(row, "欠付款"));
+}
+function updateExportButton(enabled){
+  var btn = document.getElementById("btnExport");
+  if (!btn) return;
+  btn.disabled = !enabled;
 }
 async function loginPOST(pwd){ return fetch('/api/mdirs/login',{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({password:pwd})}); }
 async function loginGET(pwd){ return fetch('/api/mdirs/login?password='+encodeURIComponent(pwd)); }
@@ -235,6 +568,34 @@ async function doLogin(pwd){
 $("#btnLogin").onclick=()=>doLogin($("#pwd").value.trim());
 $("#btnLogout").onclick=()=>{ localStorage.removeItem('X_AUTH'); TOKEN=''; setLoginUI(false); toast("已退出"); };
 if(TOKEN){ setLoginUI(true); }
+
+const autoToggle = $("#autoUpdateToggle");
+if (autoToggle) {
+  autoToggle.addEventListener('change', async function(){
+    const desired = autoToggle.checked;
+    const pwd = (prompt('请输入口令') || '').trim();
+    if (!pwd) {
+      autoToggle.checked = !desired;
+      toast('已取消');
+      return;
+    }
+    try{
+      const r = await fetch('/api/auto-update/toggle',{
+        method:'POST',
+        headers:{'Content-Type':'application/json','X-Auth': TOKEN},
+        body: JSON.stringify({enabled: desired, password: pwd})
+      });
+      if(r.status===401){ localStorage.removeItem('X_AUTH'); TOKEN=''; setLoginUI(false); toast("登录失效，请重新登录"); return; }
+      if(!r.ok){ autoToggle.checked = !desired; toast('口令错误或切换失败'); return; }
+      const j = await r.json().catch(()=>({}));
+      autoToggle.checked = !!j.enabled;
+      toast(j.enabled ? '自动更新已开启' : '自动更新已关闭');
+    }catch(e){
+      autoToggle.checked = !desired;
+      toast('切换失败');
+    }
+  });
+}
 
 $("#go").onclick = async ()=>{
 // PATCH: new-search reset
@@ -260,7 +621,9 @@ busy(true);
       "单位名称": $("#unit").value.trim(),
       "合同编号": $("#no").value.trim(),
       "签订日期": $("#dt").value.trim(),
-      "合同额": $("#amt").value.trim()
+      "合同额": $("#amt").value.trim(),
+      "欠付款为0": !!document.getElementById("unpaidZero")?.checked,
+      "欠付款不为0": !!document.getElementById("unpaidNonZero")?.checked
     };
 
 
@@ -269,27 +632,97 @@ busy(true);
       body:JSON.stringify(body)});
     if(r.status===401){ localStorage.removeItem('X_AUTH'); TOKEN=''; setLoginUI(false); toast("登录失效，请重新登录"); return; }
     const j=await r.json();
-    $("#count").textContent=((j.count_strict|0)||(j.count|0)||0)+" 条";
+    const total=((j.count_strict|0)||(j.count|0)||0);
+    $("#count").textContent=total+" 条";
+    updateExportButton(total>0);
     const tb=$("#tbody"); tb.innerHTML="";
     (j.items||[]).forEach(x=>{
+      const indexValue = (x["序号"] ?? "").toString().trim();
+      if (!indexValue) return;
       const tr=document.createElement('tr');
+      if (shouldHighlightPaid(x)) tr.classList.add('row-paid-ok');
       const link = x.pdf_path
   ? `<div class="action-bar">
         <a class="btn-open" href="${x.pdf_path}" target="_blank" rel="noopener"><span class="ico">↗</span>打开</a>
         ${x.pdf_dl ? `<a class="btn-download" href="${x.pdf_dl}" target="_blank" rel="noopener" download><span class="ico">⬇</span>下载</a>` : ``}
      </div>`
   : `<span class="sub">无</span>`;
+      const detailAction = (x.__source_file && x.__row_index)
+        ? `<button class="detail-btn" data-source="${escapeAttr(x.__source_file)}" data-row="${escapeAttr(x.__row_index)}" data-index="${escapeAttr(indexValue)}" data-pdf="${escapeAttr(x.pdf_path || "")}" data-pdfdl="${escapeAttr(x.pdf_dl || "")}">详情</button>`
+        : `<span class="sub">无</span>`;
       tr.innerHTML=`
-        <td>${x["序号"]||""}</td>
-        <td class="clip" title="${(x["工程地点及内容"]||"").replace(/"/g,'&quot;')}">${x["工程地点及内容"]||""}</td>
-        <td class="clip" title="${(x["单位名称"]||"").replace(/"/g,'&quot;')}">${x["单位名称"]||""}</td>
-        <td>${x["签订日期"]||""}</td>
-        <td>${x["合同额"]||""}</td><td>${link}</td>`;
+        <td class="col-index">${indexValue}</td>
+        <td class="clip col-loc"><div class="cell-clip" title="${(x["工程地点及内容"]||"").replace(/"/g,'&quot;')}">${x["工程地点及内容"]||""}</div></td>
+        <td class="clip col-unit"><div class="cell-clip" title="${(x["单位名称"]||"").replace(/"/g,'&quot;')}">${x["单位名称"]||""}</div></td>
+        <td class="col-date">${x["签订日期"]||""}</td>
+        <td class="col-num">${x["合同额"]||""}</td>
+        <td class="col-num">${x["结算值"]||""}</td>
+        <td class="col-num">${x["已付款"]||""}</td>
+        <td class="col-num">${x["欠付款"]||""}</td>
+        <td class="col-pdf">${link}</td>
+        <td class="col-detail">${detailAction}</td>`;
       tb.appendChild(tr);
     });
-  }catch(e){ toast("请求失败"); }
+  }catch(e){ updateExportButton(false); toast("请求失败"); }
   finally{ busy(false); }
 };
+
+$("#btnExport").onclick = async ()=>{
+  const btn = document.getElementById("btnExport");
+  if (!btn || btn.disabled) return;
+  const body={
+    "工程地点及内容": $("#loc").value.trim(),
+    "单位名称": $("#unit").value.trim(),
+    "合同编号": $("#no").value.trim(),
+    "签订日期": $("#dt").value.trim(),
+    "合同额": $("#amt").value.trim(),
+    "欠付款为0": !!document.getElementById("unpaidZero")?.checked,
+    "欠付款不为0": !!document.getElementById("unpaidNonZero")?.checked
+  };
+  busy(true);
+  btn.disabled = true;
+  try{
+    const r = await fetch('/api/search/export',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','X-Auth': TOKEN},
+      body: JSON.stringify(body)
+    });
+    if(r.status===401){ localStorage.removeItem('X_AUTH'); TOKEN=''; setLoginUI(false); toast("登录失效，请重新登录"); return; }
+    if(!r.ok){ toast("导出失败"); return; }
+    const blob = await r.blob();
+    const cd = r.headers.get('content-disposition') || '';
+    const m = cd.match(/filename\*=UTF-8''([^;]+)/i);
+    const fname = m ? decodeURIComponent(m[1]) : ('搜索结果导出_' + Date.now() + '.xlsx');
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fname;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    toast("导出成功");
+  }catch(e){
+    toast("导出失败");
+  }finally{
+    busy(false);
+    const cnt = parseInt((document.getElementById("count")?.textContent || "0"), 10) || 0;
+    updateExportButton(cnt > 0);
+  }
+};
+const tbody = $("#tbody");
+if (tbody) {
+  tbody.addEventListener("click", function(e){
+    const btn = e.target && e.target.closest ? e.target.closest(".detail-btn") : null;
+    if (!btn) return;
+    const sourceFile = btn.getAttribute("data-source") || "";
+    const rowIndex = btn.getAttribute("data-row") || "";
+    const subtitle = btn.getAttribute("data-index") || "";
+    const pdfPath = btn.getAttribute("data-pdf") || "";
+    const pdfDl = btn.getAttribute("data-pdfdl") || "";
+    loadDetailModal(sourceFile, rowIndex, subtitle, pdfPath, pdfDl);
+  });
+}
 </script>
 <script>(function(){
   function safeDoSearch(){

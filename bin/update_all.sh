@@ -18,9 +18,13 @@ trap cleanup EXIT
 } >>/tmp/update_all.log
 
 if [ -e "$LOCK" ]; then
-  echo '{"ok":false,"error":"another update running"}'; exit 1
+  LOCK_PID="$(cat "$LOCK" 2>/dev/null || true)"
+  if [ -n "$LOCK_PID" ] && kill -0 "$LOCK_PID" >/dev/null 2>&1; then
+    echo '{"ok":false,"error":"another update running"}'; exit 1
+  fi
+  rm -f "$LOCK"
 fi
-touch "$LOCK"
+echo "$$" >"$LOCK"
 
 # 确保目录存在
 mkdir -p /data/add_pending /data/add_done /data/add_error
