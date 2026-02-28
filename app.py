@@ -195,29 +195,15 @@ def _norm_date(s:str)->str:
     return "-".join([x for x in [y,mo,d] if x])
 
 def _iter_excel_files(root: str):
-    """在指定 root 下按 excel_patterns 精确匹配文件名（大小写不敏感）。
-
-    同一目录中如果出现大小写不同但逻辑同名的文件（例如 INDEX.XLSX/index.xlsx），
-    仅返回 mtime 最新的那一份，避免重复读取导致旧数据覆盖新数据。
-    """
+    """在指定 root 下按 excel_patterns 精确匹配文件名（大小写不敏感），直接返回该层的 Excel 文件。"""
     want = [p.lower() for p in CONFIG.get("excel_patterns", [])]
-    picked = {}
     try:
         for name in os.listdir(root):
             p = os.path.join(root, name)
             if os.path.isfile(p) and name.lower() in want:
-                key = name.lower()
-                try:
-                    mtime_ns = int(getattr(os.stat(p), "st_mtime_ns", int(os.path.getmtime(p) * 1e9)))
-                except Exception:
-                    mtime_ns = 0
-                prev = picked.get(key)
-                if (not prev) or (mtime_ns >= prev[1]):
-                    picked[key] = (p, mtime_ns)
+                yield p
     except FileNotFoundError:
         return
-    for _k in sorted(picked.keys()):
-        yield picked[_k][0]
 
 def _gather_excel_files():
     """返回 (files_in_order, signature)：
@@ -317,13 +303,6 @@ def _load_all_rows():
 
     rows=[]
     rows_by_key={}
-    file_mtime_map = {}
-    for x in files:
-        try:
-            st = os.stat(x)
-            file_mtime_map[x] = int(getattr(st, "st_mtime_ns", int(st.st_mtime * 1e9)))
-        except Exception:
-            file_mtime_map[x] = 0
     for x in files:
         scan_root = os.path.dirname(x)
         try:
@@ -384,17 +363,6 @@ def _load_all_rows():
             existing_idx = rows_by_key.get(dedup_key)
             if existing_idx is not None:
                 existing = rows[existing_idx]
-                existing_mtime = file_mtime_map.get(existing.get("__source_file", ""), 0)
-                current_mtime = file_mtime_map.get(item.get("__source_file", ""), 0)
-
-                # 同序号冲突时，优先采用来源 Excel 更新更晚的一条，避免旧目录数据覆盖新值。
-                if current_mtime > existing_mtime:
-                    rows[existing_idx] = item
-                    continue
-                if existing_mtime > current_mtime:
-                    continue
-
-                # mtime 相同再按是否有 PDF 链接兜底。
                 if existing.get("pdf_path") and not item.get("pdf_path"):
                     continue
                 if item.get("pdf_path") and not existing.get("pdf_path"):
