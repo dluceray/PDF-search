@@ -39,6 +39,7 @@ CONFIG: Dict = {
 }
 
 RETURN_FIELDS = ["序号","工程地点及内容","单位名称","签订日期","合同额","结算值","已付款","欠付款","合同编号","pdf_path","pdf_dl"]
+MONEY_FIELDS = {"控制价", "合同额", "结算值", "已付款", "欠付款"}
 
 PASSWORD_FALLBACK = "1982567"
 PASSWORDS_FILE = os.path.join(os.path.dirname(__file__), "DATA", "passwords.txt")
@@ -294,6 +295,51 @@ def _find_pdf(root, base, exts, subdirs):
             continue
     return ""
 
+
+
+def _extract_decimal_places_from_number_format(number_format: Optional[str]) -> Optional[int]:
+    if not number_format:
+        return None
+    fmt = str(number_format).split(';', 1)[0]
+    fmt = re.sub(r'"[^"]*"', '', fmt)
+    fmt = re.sub(r'\[[^\]]*\]', '', fmt)
+    m = re.search(r"0\.([0#]+)", fmt)
+    if not m:
+        return 0 if re.search(r"[0#]", fmt) else None
+    return len(m.group(1))
+
+
+def _build_header_map(headers: list[str]) -> dict[int, str]:
+    colmap = {}
+    has_seq = any((str(h).strip() == '序号') for h in headers)
+    for idx, h in enumerate(headers):
+        k = str(h or '').strip()
+        k_clean = re.sub(r"[\s　]+", "", k)
+        k_clean = re.sub(r"[（(].*?[)）]", "", k_clean)
+        if k in ["序号", "编号", "合同编号"]:
+            colmap[idx] = "序号" if has_seq else "合同编号"
+        if k in ["工程地点及内容", "工程名称", "项目名称", "工程地点"]:
+            colmap[idx] = "工程地点及内容"
+        if k in ["单位名称", "单位", "甲方", "客户名称"]:
+            colmap[idx] = "单位名称"
+        if k in ["签订日期", "日期", "签署日期"]:
+            colmap[idx] = "签订日期"
+        if k in ["合同额", "金额", "合同金额"]:
+            colmap[idx] = "合同额"
+        if k in ["结算值", "结算金额"]:
+            colmap[idx] = "结算值"
+        if k in ["已付款", "已支付", "已付金额"]:
+            colmap[idx] = "已付款"
+        if k in ["欠付款", "欠付", "欠付金额"]:
+            colmap[idx] = "欠付款"
+        if "结算" in k_clean and any(token in k_clean for token in ["值", "价", "金额"]):
+            colmap[idx] = "结算值"
+        if "已付" in k_clean and not any(token in k_clean for token in ["时间", "日期"]):
+            colmap[idx] = "已付款"
+        if "欠付" in k_clean and not any(token in k_clean for token in ["时间", "日期"]):
+            colmap[idx] = "欠付款"
+    return colmap
+
 def _load_all_rows():
     # —— 轻量缓存：按 Excel 清单 + (mtime,size) 签名 —— 
     files, sig = _gather_excel_files()
@@ -305,33 +351,83 @@ def _load_all_rows():
     rows_by_key={}
     for x in files:
         scan_root = os.path.dirname(x)
+        ext = os.path.splitext(x)[1].lower()
+
+        if ext == '.xlsx':
+            try:
+                from openpyxl import load_workbook
+                wb = load_workbook(x, read_only=True, data_only=True)
+                ws = wb.active
+                header_cells = list(ws[1])
+                headers = ["" if c.value is None else str(c.value).strip() for c in header_cells]
+                col_idx_map = _build_header_map(headers)
+                for row_idx, row in enumerate(ws.iter_rows(min_row=2), start=2):
+                    item = {}
+                    for col_idx, cell in enumerate(row):
+                        canonical = col_idx_map.get(col_idx)
+                        if not canonical:
+                            continue
+                        if canonical not in ["序号","工程地点及内容","单位名称","签订日期","合同额","结算值","已付款","欠付款","合同编号"]:
+                            continue
+                        raw_val = "" if cell.value is None else str(cell.value).strip()
+                        item[canonical] = raw_val
+                        if canonical in MONEY_FIELDS:
+                            money_nf = item.setdefault("__money_number_formats", {})
+                            money_nf[canonical] = cell.number_format or ""
+                    item["签订日期_norm"] = _norm_date(item.get("签订日期",""))
+                    item["__source_file"] = x
+                    item["__row_index"] = row_idx
+
+                    base = (item.get("序号") or item.get("合同编号","") or "").strip()
+                    if not base:
+                        continue
+                    pdf_guess = _find_pdf(scan_root, base, CONFIG.get("allowed_exts", [".pdf"]), CONFIG.get("pdf_subdirs", ["DOCS","docs"]))
+
+                    item["pdf_path"] = ""; item["pdf_dl"] = ""
+                    if pdf_guess:
+                        public_base = CONFIG.get("public_base","/data/contracts")
+                        prev = CONFIG.get("preview_prefix","/files/")
+                        down = CONFIG.get("download_prefix","/dl/")
+                        try:
+                            rel = os.path.relpath(pdf_guess, public_base).replace("\\","/")
+                            if not rel.startswith("../"):
+                                try:
+                                    st = os.stat(pdf_guess)
+                                    mns = int(getattr(st, 'st_mtime_ns', int(st.st_mtime*1e9)))
+                                    qs = f"?v={mns}"
+                                except Exception:
+                                    qs = ""
+                                item["pdf_path"] = prev + rel + qs
+                                item["pdf_dl"]   = down + rel + qs
+                        except Exception:
+                            pass
+                    dedup_key = base
+                    existing_idx = rows_by_key.get(dedup_key)
+                    if existing_idx is not None:
+                        existing = rows[existing_idx]
+                        if existing.get("pdf_path") and not item.get("pdf_path"):
+                            continue
+                        if item.get("pdf_path") and not existing.get("pdf_path"):
+                            rows[existing_idx] = item
+                        continue
+                    rows_by_key[dedup_key] = len(rows)
+                    rows.append(item)
+                wb.close()
+                continue
+            except Exception:
+                pass
+
         try:
             df = pd.read_excel(x, dtype=str).fillna("")
         except Exception:
             continue
-        colmap={}
-        for c in df.columns:
-            k=str(c).strip()
-            k_clean = re.sub(r"[\s\u3000]+", "", k)
-            k_clean = re.sub(r"[（(].*?[)）]", "", k_clean)
-            if k in ["序号","编号","合同编号"]: colmap[c]="序号" if "序号" in df.columns else "合同编号"
-            if k in ["工程地点及内容","工程名称","项目名称","工程地点"]: colmap[c]="工程地点及内容"
-            if k in ["单位名称","单位","甲方","客户名称"]: colmap[c]="单位名称"
-            if k in ["签订日期","日期","签署日期"]: colmap[c]="签订日期"
-            if k in ["合同额","金额","合同金额"]: colmap[c]="合同额"
-            if k in ["结算值","结算金额"]: colmap[c]="结算值"
-            if k in ["已付款","已支付","已付金额"]: colmap[c]="已付款"
-            if k in ["欠付款","欠付","欠付金额"]: colmap[c]="欠付款"
-            if "结算" in k_clean and any(token in k_clean for token in ["值","价","金额"]):
-                colmap[c]="结算值"
-            if "已付" in k_clean and not any(token in k_clean for token in ["时间","日期"]):
-                colmap[c]="已付款"
-            if "欠付" in k_clean and not any(token in k_clean for token in ["时间","日期"]):
-                colmap[c]="欠付款"
-        if colmap: df = df.rename(columns=colmap)
+        col_idx_map = _build_header_map([str(c).strip() for c in df.columns])
+        colmap = {c: col_idx_map[i] for i, c in enumerate(df.columns) if i in col_idx_map}
+        if colmap:
+            df = df.rename(columns=colmap)
 
         for row_idx, (_, r) in enumerate(df.iterrows(), start=2):
-            item={k:str(r.get(k,"")).strip() for k in ["序号","工程地点及内容","单位名称","签订日期","合同额","结算值","已付款","欠付款","合同编号"] if k in df.columns}
+            item={k:("" if r.get(k, "") is None else str(r.get(k, "")).strip()) for k in ["序号","工程地点及内容","单位名称","签订日期","合同额","结算值","已付款","欠付款","合同编号"] if k in df.columns}
             item["签订日期_norm"] = _norm_date(item.get("签订日期",""))
             item["__source_file"] = x
             item["__row_index"] = row_idx
@@ -538,20 +634,68 @@ class ReloadIn(BaseModel):
 
 
 def _parse_amount_decimal(value) -> decimal.Decimal:
+    d = _try_parse_amount_decimal(value)
+    return d if d is not None else decimal.Decimal("0")
+
+
+def _try_parse_amount_decimal(value) -> Optional[decimal.Decimal]:
     if value is None:
-        return decimal.Decimal("0")
+        return None
     text = str(value).strip()
     if text == "":
-        return decimal.Decimal("0")
+        return None
     t = (text.replace("￥", "").replace("¥", "").replace("人民币", "").replace("元", "")
              .replace("CNY", "").replace("RMB", "").replace(",", "").replace(" ", ""))
     t = re.sub(r"[^0-9.\-]", "", t)
     if t in ("", "-", ".", "-.", ".-"):
-        return decimal.Decimal("0")
+        return None
     try:
         return decimal.Decimal(t)
     except Exception:
-        return decimal.Decimal("0")
+        return None
+
+
+def _format_money_for_display(value, number_format: Optional[str]=None) -> str:
+    if value is None:
+        return ""
+    raw_text = str(value).strip()
+    if raw_text == "":
+        return ""
+    parsed = _try_parse_amount_decimal(value)
+    if parsed is None:
+        return raw_text
+
+    decimal_places = _extract_decimal_places_from_number_format(number_format)
+    if decimal_places is not None:
+        quant = decimal.Decimal("1") if decimal_places == 0 else decimal.Decimal("1").scaleb(-decimal_places)
+        display = parsed.quantize(quant, rounding=decimal.ROUND_HALF_UP)
+    else:
+        rounded_2 = parsed.quantize(decimal.Decimal("0.01"), rounding=decimal.ROUND_HALF_UP)
+        if abs(parsed - rounded_2) <= decimal.Decimal("0.0000001"):
+            display = rounded_2
+        else:
+            display = parsed
+
+    out = format(display, "f")
+    if "." in out:
+        out = out.rstrip("0").rstrip(".")
+    return out
+
+
+def _format_cell_for_display(header: str, raw, number_format: Optional[str]=None) -> str:
+    if raw is None:
+        return ""
+    if header in MONEY_FIELDS:
+        return _format_money_for_display(raw, number_format=number_format)
+    if isinstance(raw, float):
+        return format(raw, ".15g")
+    return str(raw).strip()
+
+
+def _amount_decimal_equal_business(a: decimal.Decimal, b: decimal.Decimal) -> bool:
+    qa = a.quantize(decimal.Decimal("0.01"), rounding=decimal.ROUND_HALF_UP)
+    qb = b.quantize(decimal.Decimal("0.01"), rounding=decimal.ROUND_HALF_UP)
+    return qa == qb
 
 
 def _is_settled_row(row: dict) -> bool:
@@ -559,8 +703,8 @@ def _is_settled_row(row: dict) -> bool:
     contract = _parse_amount_decimal(row.get("合同额", ""))
     settle = _parse_amount_decimal(row.get("结算值", ""))
     unpaid = _parse_amount_decimal(row.get("欠付款", ""))
-    paid_matches = (paid != 0 and contract != 0 and paid == contract) or (paid != 0 and settle != 0 and paid == settle)
-    return paid_matches and unpaid == 0
+    paid_matches = (paid != 0 and contract != 0 and _amount_decimal_equal_business(paid, contract)) or (paid != 0 and settle != 0 and _amount_decimal_equal_business(paid, settle))
+    return unpaid.quantize(decimal.Decimal("0.01"), rounding=decimal.ROUND_HALF_UP) == 0 and paid_matches
 
 
 def _expand_two_digit_year(year_text: str) -> Optional[int]:
@@ -724,7 +868,8 @@ def _collect_search_results(q: QueryIn):
         if (is_settled and not include_unpaid_zero) or ((not is_settled) and not include_unpaid_non_zero):
             continue
 
-        item = {k: it.get(k, "") for k in RETURN_FIELDS}
+        money_nf = it.get("__money_number_formats", {}) if isinstance(it.get("__money_number_formats", {}), dict) else {}
+        item = {k: _format_cell_for_display(k, it.get(k, ""), money_nf.get(k)) for k in RETURN_FIELDS}
         item["__source_file"] = it.get("__source_file", "")
         item["__row_index"] = it.get("__row_index", 0)
         res.append(item)
@@ -931,11 +1076,11 @@ def entry_detail(body: EntryDetailIn):
         val = "" if cell.value is None else str(cell.value).strip()
         headers.append(val)
 
-    row_values = None
-    for row in ws.iter_rows(min_row=row_index, max_row=row_index, values_only=True):
-        row_values = row
+    row_cells = None
+    for row in ws.iter_rows(min_row=row_index, max_row=row_index, values_only=False):
+        row_cells = row
         break
-    if row_values is None:
+    if row_cells is None:
         raise HTTPException(status_code=404, detail="Row not found")
 
     fields = []
@@ -945,9 +1090,9 @@ def entry_detail(body: EntryDetailIn):
         if not header:
             continue
         value = ""
-        if idx < len(row_values):
-            raw = row_values[idx]
-            value = "" if raw is None else str(raw).strip()
+        if idx < len(row_cells):
+            cell = row_cells[idx]
+            value = _format_cell_for_display(header, cell.value, cell.number_format)
         if header == "备注":
             has_remark_column = True
             remark_value = value
