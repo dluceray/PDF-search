@@ -148,12 +148,13 @@ def match_header(row):
         return False, {}, headers
     return True, header_map, headers
 def parse_year_from_seq(s: str):
-    s=(s or "").strip()
-    if len(s) < 3 or not s[:2].isdigit():
-        return False, -1, "序号前两位非数字"
-    if s[2] != "-":
-        return False, -1, "序号前两位数字后缺少“-”"
-    yy=int(s[:2]); year=2000+yy
+    s=(s or "")
+    # 兼容常见分隔符与全角符号，避免“24－HT-XX-001 / 24—HT...”被误判无效
+    s = s.replace("\u3000", " ").strip()
+    m = re.match(r"^(\d{2})\s*[-－—–_]+\s*.+$", s)
+    if not m:
+        return False, -1, "序号格式不合法（应以两位年份+连字符开头）"
+    yy=int(m.group(1)); year=2000+yy
     if not (YEAR_MIN<=year<=YEAR_MAX): return False,-1,f"年份超出范围:{year}"
     return True,year,""
 
@@ -520,6 +521,9 @@ def process_file(xlsx: Path, root: Path, header_mode: str):
         if not ok_year:
             res["invalid"]+=1; res["details"].append({"seq":seq,"status":"invalid","reason":rr}); continue
         buckets.setdefault(year, []).append(r)
+    if res["invalid"]:
+        sample = [d for d in res["details"] if d.get("status") == "invalid"][:5]
+        _log(f"process_file file={xlsx} invalid_rows={res['invalid']} sample={sample}")
     for year, rows2 in buckets.items():
         if not rows2: continue
         year_headers = build_year_headers(headers_present_in_rows(rows2, headers_seen))
