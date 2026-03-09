@@ -113,10 +113,8 @@ a.link{color:var(--accent);text-decoration:none}a.link:hover{text-decoration:und
 .menu-link{display:inline-flex;align-items:center;gap:6px;text-decoration:none;color:#0f172a;padding:2px 6px;border-radius:999px;border:1px solid #e2e8f0;background:#fff}
 .menu-link:hover{background:#f8fafc}
 .menu-page{font-size:12px;color:#334155}
-
 .detail-sections{margin-top:14px;margin-bottom:14px;display:flex;gap:10px;flex-wrap:wrap}
 .detail-cell-inline{display:inline-flex;align-items:center;justify-content:center;gap:8px;flex-wrap:nowrap;white-space:nowrap}
-
 .note{color:#8e8e93;font-size:12px;margin-top:6px}
 small.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;color:#6b7280}
 .toast{position:fixed;right:16px;bottom:16px;background:#fff;border:1px solid var(--line);padding:10px 12px;border-radius:12px;box-shadow:var(--shadow);opacity:0;transform:translateY(8px);transition:.2s}
@@ -404,6 +402,16 @@ const detailDownloadBtn = $("#detailDownload");
 const detailSectionsWrap = $("#detailSections");
 let detailContext = null;
 
+function ensureDetailSectionsPosition(){
+  if (!detailSectionsWrap || !detailRemark) return;
+  const detailBody = detailSectionsWrap.parentElement;
+  const remarkBlock = detailRemark.closest('.detail-remark');
+  if (!detailBody || !remarkBlock) return;
+  if (detailSectionsWrap.nextElementSibling !== remarkBlock) {
+    detailBody.insertBefore(detailSectionsWrap, remarkBlock);
+  }
+}
+
 function renderMenuBadge(section){
   if (!section || !section.char) return "";
   const color = section.color || "blue";
@@ -413,9 +421,7 @@ function renderMenuBadge(section){
 function renderMenuBadgeRow(sections){
   const list = Array.isArray(sections) ? sections : [];
   const simple = list.filter(s=>s && (s.key === "settlement" || s.key === "acceptance"));
-
   if (!simple.length) return ``;
-
   return `<div class="menu-badges">${simple.map(renderMenuBadge).join("")}</div>`;
 }
 function renderDetailSections(sections){
@@ -525,6 +531,7 @@ async function loadDetailModal(sourceFile, rowIndex, subtitle, pdfPath, pdfDl){
   if (detailRemark) detailRemark.value = "";
   if (detailRemark) detailRemark.placeholder = "填写备注...";
   renderDetailFields([]);
+  ensureDetailSectionsPosition();
   renderDetailSections([]);
   updateDetailPdfLinks(detailContext);
   openDetailModal();
@@ -538,6 +545,7 @@ async function loadDetailModal(sourceFile, rowIndex, subtitle, pdfPath, pdfDl){
     const j = await r.json();
     if(!r.ok || !j || !j.ok){ toast((j && j.detail) || "详情加载失败"); return; }
     renderDetailFields(j.fields || []);
+    ensureDetailSectionsPosition();
     renderDetailSections(j.menu_sections || []);
     if (detailRemark) detailRemark.value = j.remark || "";
     if (detailRemark && !j.has_remark_column) {
@@ -554,6 +562,7 @@ if (detailBackdrop) {
   });
 }
 if (detailSectionsWrap) {
+  ensureDetailSectionsPosition();
   detailSectionsWrap.addEventListener("click", async function(e){
     const link = e.target && e.target.closest ? e.target.closest(".menu-link") : null;
     if (!link) return;
@@ -760,7 +769,6 @@ busy(true);
         <td class="col-num">${x["欠付款"]||""}</td>
         <td class="col-pdf">${link}</td>
         <td class="col-detail"><div class="detail-cell-inline">${detailAction}${menuBadges}</div></td>`;
-
       tb.appendChild(tr);
     });
   }catch(e){ updateExportButton(false); toast("请求失败"); }

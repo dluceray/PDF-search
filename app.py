@@ -140,7 +140,7 @@ _MENU_LOCK = threading.Lock()
 MENU_XLSX_PATH = "/data/contracts/menu.xlsx"
 
 SECTION_TYPES = {
-    "contract": {"label": "合同", "char": "合", "color": "red", "match": ["合同"]},
+    "contract": {"label": "合同", "char": "合", "color": "red", "match": ["合同本体", "合同正文"]},
     "acceptance": {"label": "验收", "char": "验", "color": "blue", "match": ["验收/收货服务凭证", "验收", "收货服务凭证"]},
     "settlement": {"label": "结算", "char": "结", "color": "green", "match": ["结算报告", "结算"]},
 }
@@ -308,7 +308,7 @@ def _find_pdf(root, base, exts, subdirs):
 
 
 def _find_pdf_by_contract_code(root: str, code: str, subdirs: list[str]) -> str:
-    code_norm = _normalize_contract_code(code)
+    code_norm = _contract_compare_key(code)
     if not code_norm:
         return ""
     cand_dirs = [root] + [os.path.join(root, sd) for sd in (subdirs or [])]
@@ -320,13 +320,28 @@ def _find_pdf_by_contract_code(root: str, code: str, subdirs: list[str]) -> str:
                 if not name.lower().endswith(".pdf"):
                     continue
                 stem = os.path.splitext(name)[0]
-                stem_norm = _normalize_contract_code(stem)
+
+                stem_norm = _contract_compare_key(stem)
                 if code_norm and stem_norm and (code_norm in stem_norm or stem_norm in code_norm):
                     p = os.path.join(d, name)
                     if os.path.isfile(p):
                         return p
         except Exception:
             continue
+
+    return ""
+
+
+def _find_pdf_globally_by_contract_code(code: str) -> str:
+    """下载兜底：在所有配置 root 下按合同编号比较键查找 PDF。"""
+    roots = [r for r in CONFIG.get("roots", []) if isinstance(r, str) and r]
+    subdirs = CONFIG.get("pdf_subdirs", ["DOCS", "docs"])
+    for root in roots:
+        p = _find_pdf_by_contract_code(root, code, subdirs)
+        if p and os.path.isfile(p):
+            return p
+    return ""
+
 
 def _normalize_contract_code(text: str) -> str:
     raw = str(text or "").strip()
@@ -345,10 +360,23 @@ def _normalize_menu_file_name(text: str) -> str:
     # menu.xlsx 的“文件名”列可能带 .txt，仅移除这个后缀再参与匹配，其他内容保持不变
     raw = re.sub(r"\.txt$", "", raw, flags=re.IGNORECASE)
     return _normalize_contract_code(raw)
+
+
+
+def _contract_compare_key(text: str) -> str:
+    """仅用于匹配比较：去除分隔符差异，提高 menu/PDF 命中率，不改变原始展示内容。"""
+    base = _normalize_contract_code(text)
+    return re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", base)
+
+
 def _resolve_menu_columns(headers: list[str]) -> dict:
     col_file = None
     col_type = None
     col_catalog = None
+
+    preferred_type = None
+    preferred_catalog = None
+
     for idx, h in enumerate(headers):
         txt = str(h or "").strip()
         if not txt:
@@ -356,10 +384,20 @@ def _resolve_menu_columns(headers: list[str]) -> dict:
         t = re.sub(r"\s+", "", txt)
         if col_file is None and ("文件名" in t or ("文件" in t and "名" in t)):
             col_file = idx
+
+        if preferred_type is None and ("包含类型" in t or "类型包含" in t):
+            preferred_type = idx
         if col_type is None and "类型" in t:
             col_type = idx
-        if col_catalog is None and ("目录" in t or "页码" in t or "页数" in t):
+        if preferred_catalog is None and "目录" in t:
+            preferred_catalog = idx
+        if col_catalog is None and ("页码" in t or "页数" in t or "目录" in t):
             col_catalog = idx
+    if preferred_type is not None:
+        col_type = preferred_type
+    if preferred_catalog is not None:
+        col_catalog = preferred_catalog
+
     return {"file": col_file, "type": col_type, "catalog": col_catalog}
 
 
@@ -394,7 +432,6 @@ def _load_menu_rows() -> list[dict]:
                 continue
             out.append({
                 "file_name": file_name,
-
                 "file_norm": _normalize_menu_file_name(file_name),
                 "type_text": type_text,
                 "catalog": cat_text,
@@ -423,7 +460,6 @@ def _parse_page_range(text: str) -> Optional[tuple[int, int, str]]:
     if m2:
         a = int(m2.group(1))
         return a, a, f"P{a}"
-
     m3 = re.search(r"(?<!\d)(\d+)\s*[-~—－–至]\s*(\d+)(?!\d)", s)
     if m3:
         a, b = int(m3.group(1)), int(m3.group(2))
@@ -446,15 +482,39 @@ def _normalize_page_label(text: str) -> str:
         return meta[2]
     return s
 
+
+def _extract_section_pages_from_catalog(catalog_text: str, keywords: list[str]) -> Optional[tuple[int, int, str]]:
+    text = str(catalog_text or "").strip()
+    if not text:
+        return None
+    parts = [p.strip() for p in re.split(r"\s*\|\s*", text) if p and str(p).strip()]
+    fallback = None
+    for part in parts:
+        page_meta = _parse_page_range(part)
+        if page_meta and fallback is None:
+            fallback = page_meta
+        label = ""
+        if ":" in part:
+            label = part.split(":", 1)[1]
+        else:
+            label = part
+        label = str(label)
+        if any(k in label for k in (keywords or [])) and page_meta:
+            return page_meta
+    return fallback
+
+
 def _menu_sections_for_contract(contract_code: str) -> list[dict]:
-    code_norm = _normalize_contract_code(contract_code)
+    code_norm = _contract_compare_key(contract_code)
     if not code_norm:
         return []
 
     menu_rows = _load_menu_rows()
     matches = []
     for row in menu_rows:
-        file_norm = row.get("file_norm", "")
+
+        file_norm = _contract_compare_key(row.get("file_norm", ""))
+
         if not file_norm:
             continue
         if code_norm in file_norm or file_norm in code_norm:
@@ -467,7 +527,6 @@ def _menu_sections_for_contract(contract_code: str) -> list[dict]:
         for m in matches:
             t = str(m.get("type_text", ""))
             if any(token in t for token in conf["match"]):
-
                 page_meta = _parse_page_range(m.get("catalog", ""))
                 if found is None:
                     found = m
@@ -477,9 +536,8 @@ def _menu_sections_for_contract(contract_code: str) -> list[dict]:
                     break
         if not found:
             continue
-        page_meta = _parse_page_range(found.get("catalog", ""))
-        page_label = _normalize_page_label(found.get("catalog", ""))
-
+        page_meta = _extract_section_pages_from_catalog(found.get("catalog", ""), conf.get("match", []))
+        page_label = page_meta[2] if page_meta else _normalize_page_label(found.get("catalog", ""))
         sections.append({
             "key": key,
             "label": conf["label"],
@@ -1346,7 +1404,10 @@ def entry_detail(body: EntryDetailIn):
 
 @app.post("/api/entry/section/download", dependencies=[Depends(require_auth)])
 def entry_section_download(body: EntrySectionDownloadIn):
-    from pypdf import PdfReader, PdfWriter
+    try:
+        from pypdf import PdfReader, PdfWriter
+    except Exception:
+        from PyPDF2 import PdfReader, PdfWriter
 
     real = _resolve_source_file(body.source_file)
     row_index = int(body.row_index or 0)
@@ -1369,10 +1430,10 @@ def entry_section_download(body: EntrySectionDownloadIn):
     base = str(code).strip()
     root = os.path.dirname(real)
     pdf_src = _find_pdf(root, base, CONFIG.get("allowed_exts", [".pdf"]), CONFIG.get("pdf_subdirs", ["DOCS", "docs"]))
-
     if (not pdf_src) or (not os.path.isfile(pdf_src)):
         pdf_src = _find_pdf_by_contract_code(root, base, CONFIG.get("pdf_subdirs", ["DOCS", "docs"]))
-
+    if (not pdf_src) or (not os.path.isfile(pdf_src)):
+        pdf_src = _find_pdf_globally_by_contract_code(base)
     if not pdf_src or not os.path.isfile(pdf_src):
         raise HTTPException(status_code=404, detail="Source PDF not found")
 
