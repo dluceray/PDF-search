@@ -327,8 +327,6 @@ def _find_pdf_by_contract_code(root: str, code: str, subdirs: list[str]) -> str:
                         return p
         except Exception:
             continue
-    return ""
-
 
 def _normalize_contract_code(text: str) -> str:
     raw = str(text or "").strip()
@@ -347,8 +345,6 @@ def _normalize_menu_file_name(text: str) -> str:
     # menu.xlsx 的“文件名”列可能带 .txt，仅移除这个后缀再参与匹配，其他内容保持不变
     raw = re.sub(r"\.txt$", "", raw, flags=re.IGNORECASE)
     return _normalize_contract_code(raw)
-
-
 def _resolve_menu_columns(headers: list[str]) -> dict:
     col_file = None
     col_type = None
@@ -398,6 +394,7 @@ def _load_menu_rows() -> list[dict]:
                 continue
             out.append({
                 "file_name": file_name,
+
                 "file_norm": _normalize_menu_file_name(file_name),
                 "type_text": type_text,
                 "catalog": cat_text,
@@ -426,6 +423,7 @@ def _parse_page_range(text: str) -> Optional[tuple[int, int, str]]:
     if m2:
         a = int(m2.group(1))
         return a, a, f"P{a}"
+
     m3 = re.search(r"(?<!\d)(\d+)\s*[-~—－–至]\s*(\d+)(?!\d)", s)
     if m3:
         a, b = int(m3.group(1)), int(m3.group(2))
@@ -448,7 +446,6 @@ def _normalize_page_label(text: str) -> str:
         return meta[2]
     return s
 
-
 def _menu_sections_for_contract(contract_code: str) -> list[dict]:
     code_norm = _normalize_contract_code(contract_code)
     if not code_norm:
@@ -470,6 +467,7 @@ def _menu_sections_for_contract(contract_code: str) -> list[dict]:
         for m in matches:
             t = str(m.get("type_text", ""))
             if any(token in t for token in conf["match"]):
+
                 page_meta = _parse_page_range(m.get("catalog", ""))
                 if found is None:
                     found = m
@@ -481,6 +479,7 @@ def _menu_sections_for_contract(contract_code: str) -> list[dict]:
             continue
         page_meta = _parse_page_range(found.get("catalog", ""))
         page_label = _normalize_page_label(found.get("catalog", ""))
+
         sections.append({
             "key": key,
             "label": conf["label"],
@@ -1370,8 +1369,10 @@ def entry_section_download(body: EntrySectionDownloadIn):
     base = str(code).strip()
     root = os.path.dirname(real)
     pdf_src = _find_pdf(root, base, CONFIG.get("allowed_exts", [".pdf"]), CONFIG.get("pdf_subdirs", ["DOCS", "docs"]))
+
     if (not pdf_src) or (not os.path.isfile(pdf_src)):
         pdf_src = _find_pdf_by_contract_code(root, base, CONFIG.get("pdf_subdirs", ["DOCS", "docs"]))
+
     if not pdf_src or not os.path.isfile(pdf_src):
         raise HTTPException(status_code=404, detail="Source PDF not found")
 

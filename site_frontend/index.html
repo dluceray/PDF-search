@@ -113,8 +113,10 @@ a.link{color:var(--accent);text-decoration:none}a.link:hover{text-decoration:und
 .menu-link{display:inline-flex;align-items:center;gap:6px;text-decoration:none;color:#0f172a;padding:2px 6px;border-radius:999px;border:1px solid #e2e8f0;background:#fff}
 .menu-link:hover{background:#f8fafc}
 .menu-page{font-size:12px;color:#334155}
+
 .detail-sections{margin-top:14px;margin-bottom:14px;display:flex;gap:10px;flex-wrap:wrap}
 .detail-cell-inline{display:inline-flex;align-items:center;justify-content:center;gap:8px;flex-wrap:nowrap;white-space:nowrap}
+
 .note{color:#8e8e93;font-size:12px;margin-top:6px}
 small.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;color:#6b7280}
 .toast{position:fixed;right:16px;bottom:16px;background:#fff;border:1px solid var(--line);padding:10px 12px;border-radius:12px;box-shadow:var(--shadow);opacity:0;transform:translateY(8px);transition:.2s}
@@ -335,6 +337,7 @@ small.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospa
         <div class="sub" id="detailSubtitle"></div>
       </div>
       <div class="detail-body">
+        <div class="detail-sections" id="detailSections"></div>
         <div class="detail-grid" id="detailGrid"></div>
         <div class="detail-sections" id="detailSections"></div>
         <div class="detail-remark">
@@ -410,7 +413,9 @@ function renderMenuBadge(section){
 function renderMenuBadgeRow(sections){
   const list = Array.isArray(sections) ? sections : [];
   const simple = list.filter(s=>s && (s.key === "settlement" || s.key === "acceptance"));
+
   if (!simple.length) return ``;
+
   return `<div class="menu-badges">${simple.map(renderMenuBadge).join("")}</div>`;
 }
 function renderDetailSections(sections){
@@ -755,6 +760,7 @@ busy(true);
         <td class="col-num">${x["欠付款"]||""}</td>
         <td class="col-pdf">${link}</td>
         <td class="col-detail"><div class="detail-cell-inline">${detailAction}${menuBadges}</div></td>`;
+
       tb.appendChild(tr);
     });
   }catch(e){ updateExportButton(false); toast("请求失败"); }
