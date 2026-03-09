@@ -42,7 +42,7 @@ th,td{padding:10px 12px;border-bottom:1px solid #f0f0f0;vertical-align:top}
 td{font-size:13px}
 tbody tr:hover{background:#fafcff}
 td.clip{
-  max-width:280px;
+  max-width:250px;
   white-space:normal;
   word-break:break-word;
 }
@@ -64,7 +64,7 @@ col.col-index,th.col-index,td.col-index{width:64px;text-align:center}
 col.col-date,th.col-date,td.col-date{width:88px;text-align:center}
 col.col-num,th.col-num,td.col-num{width:80px;text-align:right;font-variant-numeric:tabular-nums}
 col.col-pdf,th.col-pdf,td.col-pdf{width:140px;text-align:center}
-col.col-detail,th.col-detail,td.col-detail{width:90px;text-align:center}
+col.col-detail,th.col-detail,td.col-detail{width:150px;text-align:center}
 col.col-loc,th.col-loc,td.col-loc{width:140px}
 col.col-unit,th.col-unit,td.col-unit{width:130px}
 tbody tr.row-paid-ok{background:#f2faf3}
@@ -105,6 +105,16 @@ a.link{color:var(--accent);text-decoration:none}a.link:hover{text-decoration:und
   position:sticky;bottom:0;align-items:center;
 }
 .detail-footer .detail-pdf-actions{margin-right:auto}
+.menu-badges{display:inline-flex;align-items:center;gap:4px;flex-wrap:wrap;justify-content:center}
+.menu-badge{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:999px;color:#fff;font-size:12px;font-weight:700;line-height:1}
+.menu-badge.green{background:#22c55e}
+.menu-badge.blue{background:#3b82f6}
+.menu-badge.red{background:#ef4444}
+.menu-link{display:inline-flex;align-items:center;gap:6px;text-decoration:none;color:#0f172a;padding:2px 6px;border-radius:999px;border:1px solid #e2e8f0;background:#fff}
+.menu-link:hover{background:#f8fafc}
+.menu-page{font-size:12px;color:#334155}
+.detail-sections{margin-top:14px;margin-bottom:14px;display:flex;gap:10px;flex-wrap:wrap}
+.detail-cell-inline{display:inline-flex;align-items:center;justify-content:center;gap:8px;flex-wrap:nowrap;white-space:nowrap}
 .note{color:#8e8e93;font-size:12px;margin-top:6px}
 small.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;color:#6b7280}
 .toast{position:fixed;right:16px;bottom:16px;background:#fff;border:1px solid var(--line);padding:10px 12px;border-radius:12px;box-shadow:var(--shadow);opacity:0;transform:translateY(8px);transition:.2s}
@@ -326,6 +336,7 @@ small.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospa
       </div>
       <div class="detail-body">
         <div class="detail-grid" id="detailGrid"></div>
+        <div class="detail-sections" id="detailSections"></div>
         <div class="detail-remark">
           <label for="detailRemark">备注</label>
           <textarea id="detailRemark" placeholder="填写备注..."></textarea>
@@ -387,7 +398,57 @@ const detailCloseBtn = $("#detailClose");
 const detailSubtitle = $("#detailSubtitle");
 const detailOpenBtn = $("#detailOpen");
 const detailDownloadBtn = $("#detailDownload");
+const detailSectionsWrap = $("#detailSections");
 let detailContext = null;
+
+function renderMenuBadge(section){
+  if (!section || !section.char) return "";
+  const color = section.color || "blue";
+  const title = `${section.label || ""}${section.pages ? " " + section.pages : ""}`.trim();
+  return `<span class="menu-badge ${escapeAttr(color)}" title="${escapeAttr(title)}">${escapeHtml(section.char)}</span>`;
+}
+function renderMenuBadgeRow(sections){
+  const list = Array.isArray(sections) ? sections : [];
+  const simple = list.filter(s=>s && (s.key === "settlement" || s.key === "acceptance"));
+  if (!simple.length) return ``;
+  return `<div class="menu-badges">${simple.map(renderMenuBadge).join("")}</div>`;
+}
+function renderDetailSections(sections){
+  if (!detailSectionsWrap) return;
+  const list = Array.isArray(sections) ? sections : [];
+  if (!list.length) { detailSectionsWrap.innerHTML = ""; return; }
+  detailSectionsWrap.innerHTML = list.map(function(s){
+    const page = s.pages ? `<span class="menu-page">${escapeHtml(s.pages)}</span>` : "";
+    const key = escapeAttr(s.key || "");
+    return `<a class="menu-link" href="#" data-section="${key}" title="下载${escapeAttr(s.label || "")}">${renderMenuBadge(s)}${page}</a>`;
+  }).join("");
+}
+async function downloadSection(sectionKey){
+  if (!detailContext || !sectionKey) return;
+  const r = await fetch('/api/entry/section/download', {
+    method:'POST',
+    headers:{'Content-Type':'application/json','X-Auth': TOKEN},
+    body: JSON.stringify({source_file: detailContext.sourceFile, row_index: detailContext.rowIndex, section_key: sectionKey})
+  });
+  if(r.status===401){ localStorage.removeItem('X_AUTH'); TOKEN=''; setLoginUI(false); toast("登录失效，请重新登录"); closeDetailModal(); return; }
+  if(!r.ok){
+    const j = await r.json().catch(()=>({}));
+    toast((j && j.detail) || "分段下载失败");
+    return;
+  }
+  const blob = await r.blob();
+  const cd = r.headers.get('content-disposition') || '';
+  const m = cd.match(/filename\*=UTF-8''([^;]+)/i);
+  const fname = m ? decodeURIComponent(m[1]) : ('下载_' + Date.now() + '.pdf');
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fname;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
 
 function openDetailModal(){
   if (!detailBackdrop) return;
@@ -459,6 +520,7 @@ async function loadDetailModal(sourceFile, rowIndex, subtitle, pdfPath, pdfDl){
   if (detailRemark) detailRemark.value = "";
   if (detailRemark) detailRemark.placeholder = "填写备注...";
   renderDetailFields([]);
+  renderDetailSections([]);
   updateDetailPdfLinks(detailContext);
   openDetailModal();
   try{
@@ -471,6 +533,7 @@ async function loadDetailModal(sourceFile, rowIndex, subtitle, pdfPath, pdfDl){
     const j = await r.json();
     if(!r.ok || !j || !j.ok){ toast((j && j.detail) || "详情加载失败"); return; }
     renderDetailFields(j.fields || []);
+    renderDetailSections(j.menu_sections || []);
     if (detailRemark) detailRemark.value = j.remark || "";
     if (detailRemark && !j.has_remark_column) {
       detailRemark.placeholder = "目录中没有备注列，保存时将自动创建";
@@ -483,6 +546,14 @@ if (detailCloseBtn) detailCloseBtn.addEventListener("click", closeDetailModal);
 if (detailBackdrop) {
   detailBackdrop.addEventListener("click", function(e){
     if (e.target === detailBackdrop) closeDetailModal();
+  });
+}
+if (detailSectionsWrap) {
+  detailSectionsWrap.addEventListener("click", async function(e){
+    const link = e.target && e.target.closest ? e.target.closest(".menu-link") : null;
+    if (!link) return;
+    e.preventDefault();
+    await downloadSection(link.getAttribute("data-section") || "");
   });
 }
 document.addEventListener("keydown", function(e){
@@ -672,6 +743,7 @@ busy(true);
       const detailAction = (x.__source_file && x.__row_index)
         ? `<button class="detail-btn" data-source="${escapeAttr(x.__source_file)}" data-row="${escapeAttr(x.__row_index)}" data-index="${escapeAttr(indexValue)}" data-pdf="${escapeAttr(x.pdf_path || "")}" data-pdfdl="${escapeAttr(x.pdf_dl || "")}">详情</button>`
         : `<span class="sub">无</span>`;
+      const menuBadges = renderMenuBadgeRow(x.menu_sections || []);
       tr.innerHTML=`
         <td class="col-index">${indexValue}</td>
         <td class="clip col-loc"><div class="cell-clip" title="${(x["工程地点及内容"]||"").replace(/"/g,'&quot;')}">${x["工程地点及内容"]||""}</div></td>
@@ -682,7 +754,7 @@ busy(true);
         <td class="col-num">${x["已付款"]||""}</td>
         <td class="col-num">${x["欠付款"]||""}</td>
         <td class="col-pdf">${link}</td>
-        <td class="col-detail">${detailAction}</td>`;
+        <td class="col-detail"><div class="detail-cell-inline">${detailAction}${menuBadges}</div></td>`;
       tb.appendChild(tr);
     });
   }catch(e){ updateExportButton(false); toast("请求失败"); }

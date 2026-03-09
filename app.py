@@ -134,6 +134,17 @@ def _get_auto_update_enabled() -> bool:
 # 轻量 rows 缓存（按 Excel 列表+mtime 签名）
 _ROWS_CACHE = {"sig": None, "rows": []}
 _ROWS_LOCK = threading.Lock()
+_MENU_CACHE = {"sig": None, "rows": []}
+_MENU_LOCK = threading.Lock()
+
+MENU_XLSX_PATH = "/data/contracts/menu.xlsx"
+
+SECTION_TYPES = {
+    "contract": {"label": "合同", "char": "合", "color": "red", "match": ["合同"]},
+    "acceptance": {"label": "验收", "char": "验", "color": "blue", "match": ["验收/收货服务凭证", "验收", "收货服务凭证"]},
+    "settlement": {"label": "结算", "char": "结", "color": "green", "match": ["结算报告", "结算"]},
+}
+SECTION_ORDER = ["contract", "acceptance", "settlement"]
 
 def _utc_now_ts() -> float: return datetime.datetime.utcnow().timestamp()
 def _issue_token(hours=24) -> str:
@@ -294,6 +305,193 @@ def _find_pdf(root, base, exts, subdirs):
         except FileNotFoundError:
             continue
     return ""
+
+
+def _find_pdf_by_contract_code(root: str, code: str, subdirs: list[str]) -> str:
+    code_norm = _normalize_contract_code(code)
+    if not code_norm:
+        return ""
+    cand_dirs = [root] + [os.path.join(root, sd) for sd in (subdirs or [])]
+    for d in cand_dirs:
+        if not os.path.isdir(d):
+            continue
+        try:
+            for name in os.listdir(d):
+                if not name.lower().endswith(".pdf"):
+                    continue
+                stem = os.path.splitext(name)[0]
+                stem_norm = _normalize_contract_code(stem)
+                if code_norm and stem_norm and (code_norm in stem_norm or stem_norm in code_norm):
+                    p = os.path.join(d, name)
+                    if os.path.isfile(p):
+                        return p
+        except Exception:
+            continue
+    return ""
+
+
+def _normalize_contract_code(text: str) -> str:
+    raw = str(text or "").strip()
+    if not raw:
+        return ""
+    raw = os.path.splitext(raw)[0]
+    raw = raw.lower()
+    raw = re.sub(r"\s+", "", raw)
+    return raw
+
+
+def _normalize_menu_file_name(text: str) -> str:
+    raw = str(text or "").strip()
+    if not raw:
+        return ""
+    # menu.xlsx 的“文件名”列可能带 .txt，仅移除这个后缀再参与匹配，其他内容保持不变
+    raw = re.sub(r"\.txt$", "", raw, flags=re.IGNORECASE)
+    return _normalize_contract_code(raw)
+
+
+def _resolve_menu_columns(headers: list[str]) -> dict:
+    col_file = None
+    col_type = None
+    col_catalog = None
+    for idx, h in enumerate(headers):
+        txt = str(h or "").strip()
+        if not txt:
+            continue
+        t = re.sub(r"\s+", "", txt)
+        if col_file is None and ("文件名" in t or ("文件" in t and "名" in t)):
+            col_file = idx
+        if col_type is None and "类型" in t:
+            col_type = idx
+        if col_catalog is None and ("目录" in t or "页码" in t or "页数" in t):
+            col_catalog = idx
+    return {"file": col_file, "type": col_type, "catalog": col_catalog}
+
+
+def _load_menu_rows() -> list[dict]:
+    path = MENU_XLSX_PATH
+    try:
+        st = os.stat(path)
+        sig = f"{int(getattr(st, 'st_mtime_ns', int(st.st_mtime*1e9)))}:{st.st_size}"
+    except Exception:
+        return []
+
+    with _MENU_LOCK:
+        if _MENU_CACHE.get("sig") == sig:
+            return list(_MENU_CACHE.get("rows", []))
+
+    try:
+        from openpyxl import load_workbook
+        wb = load_workbook(path, read_only=True, data_only=True)
+        ws = wb.active
+        headers = ["" if c.value is None else str(c.value).strip() for c in ws[1]]
+        colmap = _resolve_menu_columns(headers)
+        file_idx, type_idx, cat_idx = colmap.get("file"), colmap.get("type"), colmap.get("catalog")
+        if file_idx is None or type_idx is None:
+            wb.close()
+            return []
+        out = []
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            file_name = "" if file_idx >= len(row) or row[file_idx] is None else str(row[file_idx]).strip()
+            type_text = "" if type_idx >= len(row) or row[type_idx] is None else str(row[type_idx]).strip()
+            cat_text = "" if (cat_idx is None or cat_idx >= len(row) or row[cat_idx] is None) else str(row[cat_idx]).strip()
+            if not file_name or not type_text:
+                continue
+            out.append({
+                "file_name": file_name,
+                "file_norm": _normalize_menu_file_name(file_name),
+                "type_text": type_text,
+                "catalog": cat_text,
+            })
+        wb.close()
+    except Exception:
+        return []
+
+    with _MENU_LOCK:
+        _MENU_CACHE["sig"] = sig
+        _MENU_CACHE["rows"] = list(out)
+    return out
+
+
+def _parse_page_range(text: str) -> Optional[tuple[int, int, str]]:
+    s = str(text or "").strip()
+    if not s:
+        return None
+    m = re.search(r"[Pp]\s*(\d+)\s*[-~—－–至]\s*[Pp]?\s*(\d+)", s)
+    if m:
+        a, b = int(m.group(1)), int(m.group(2))
+        if a > b:
+            a, b = b, a
+        return a, b, f"P{a}-P{b}"
+    m2 = re.search(r"[Pp]\s*(\d+)", s)
+    if m2:
+        a = int(m2.group(1))
+        return a, a, f"P{a}"
+    m3 = re.search(r"(?<!\d)(\d+)\s*[-~—－–至]\s*(\d+)(?!\d)", s)
+    if m3:
+        a, b = int(m3.group(1)), int(m3.group(2))
+        if a > b:
+            a, b = b, a
+        return a, b, f"P{a}-P{b}"
+    m4 = re.search(r"(?<!\d)(\d+)(?!\d)", s)
+    if m4:
+        a = int(m4.group(1))
+        return a, a, f"P{a}"
+    return None
+
+
+def _normalize_page_label(text: str) -> str:
+    s = str(text or "").strip()
+    if not s:
+        return ""
+    meta = _parse_page_range(s)
+    if meta:
+        return meta[2]
+    return s
+
+
+def _menu_sections_for_contract(contract_code: str) -> list[dict]:
+    code_norm = _normalize_contract_code(contract_code)
+    if not code_norm:
+        return []
+
+    menu_rows = _load_menu_rows()
+    matches = []
+    for row in menu_rows:
+        file_norm = row.get("file_norm", "")
+        if not file_norm:
+            continue
+        if code_norm in file_norm or file_norm in code_norm:
+            matches.append(row)
+
+    sections = []
+    for key in SECTION_ORDER:
+        conf = SECTION_TYPES[key]
+        found = None
+        for m in matches:
+            t = str(m.get("type_text", ""))
+            if any(token in t for token in conf["match"]):
+                page_meta = _parse_page_range(m.get("catalog", ""))
+                if found is None:
+                    found = m
+                # 优先选择有页码的同类型条目，避免拿到空目录
+                if page_meta:
+                    found = m
+                    break
+        if not found:
+            continue
+        page_meta = _parse_page_range(found.get("catalog", ""))
+        page_label = _normalize_page_label(found.get("catalog", ""))
+        sections.append({
+            "key": key,
+            "label": conf["label"],
+            "char": conf["char"],
+            "color": conf["color"],
+            "pages": page_label,
+            "start_page": page_meta[0] if page_meta else None,
+            "end_page": page_meta[1] if page_meta else None,
+            "type_text": str(found.get("type_text", "")),
+        })
+    return sections
 
 
 
@@ -870,6 +1068,8 @@ def _collect_search_results(q: QueryIn):
 
         money_nf = it.get("__money_number_formats", {}) if isinstance(it.get("__money_number_formats", {}), dict) else {}
         item = {k: _format_cell_for_display(k, it.get(k, ""), money_nf.get(k)) for k in RETURN_FIELDS}
+        contract_code = item.get("序号") or item.get("合同编号") or ""
+        item["menu_sections"] = _menu_sections_for_contract(contract_code)
         item["__source_file"] = it.get("__source_file", "")
         item["__row_index"] = it.get("__row_index", 0)
         res.append(item)
@@ -888,6 +1088,11 @@ class EntryRemarkIn(BaseModel):
     source_file: str
     row_index: int
     remark: Optional[str] = ""
+
+class EntrySectionDownloadIn(BaseModel):
+    source_file: str
+    row_index: int
+    section_key: str
 
 @app.get("/api/health")
 def health(): return {"ok": True, "ts": int(_utc_now_ts())}
@@ -1057,6 +1262,37 @@ def _remark_is_meaningful(value: str) -> bool:
     cleaned = re.sub(r"[\\s,，、;；/|]+", "", text)
     return bool(cleaned)
 
+
+def _extract_row_contract_code(real: str, row_index: int) -> str:
+    from openpyxl import load_workbook
+
+    wb = load_workbook(real, read_only=True, data_only=True)
+    ws = wb.active
+    if row_index > ws.max_row:
+        wb.close()
+        return ""
+
+    headers = ["" if c.value is None else str(c.value).strip() for c in ws[1]]
+    colmap = _build_header_map(headers)
+    row_cells = None
+    for row in ws.iter_rows(min_row=row_index, max_row=row_index, values_only=False):
+        row_cells = row
+        break
+    if row_cells is None:
+        wb.close()
+        return ""
+
+    seq = ""
+    no = ""
+    for idx, cell in enumerate(row_cells):
+        canonical = colmap.get(idx)
+        if canonical == "序号" and cell.value is not None:
+            seq = str(cell.value).strip()
+        if canonical == "合同编号" and cell.value is not None:
+            no = str(cell.value).strip()
+    wb.close()
+    return seq or no
+
 @app.post("/api/entry/detail", dependencies=[Depends(require_auth)])
 def entry_detail(body: EntryDetailIn):
     from openpyxl import load_workbook
@@ -1099,7 +1335,64 @@ def entry_detail(body: EntryDetailIn):
             continue
         fields.append({"label": header, "value": value})
 
-    return {"ok": True, "fields": fields, "remark": remark_value, "has_remark_column": has_remark_column}
+    contract_code = ""
+    for f in fields:
+        if f.get("label") in ["序号", "合同编号"] and f.get("value"):
+            contract_code = f.get("value")
+            if f.get("label") == "序号":
+                break
+    menu_sections = _menu_sections_for_contract(contract_code)
+    return {"ok": True, "fields": fields, "remark": remark_value, "has_remark_column": has_remark_column, "menu_sections": menu_sections}
+
+
+@app.post("/api/entry/section/download", dependencies=[Depends(require_auth)])
+def entry_section_download(body: EntrySectionDownloadIn):
+    from pypdf import PdfReader, PdfWriter
+
+    real = _resolve_source_file(body.source_file)
+    row_index = int(body.row_index or 0)
+    if row_index < 2:
+        raise HTTPException(status_code=400, detail="Invalid row index")
+
+    code = _extract_row_contract_code(real, row_index)
+    if not code:
+        raise HTTPException(status_code=404, detail="Contract code not found")
+    sections = _menu_sections_for_contract(code)
+    section = next((s for s in sections if s.get("key") == body.section_key), None)
+    if not section:
+        raise HTTPException(status_code=404, detail="Section not found")
+
+    start_page = section.get("start_page")
+    end_page = section.get("end_page")
+    if not start_page or not end_page:
+        raise HTTPException(status_code=400, detail="Section page range invalid")
+
+    base = str(code).strip()
+    root = os.path.dirname(real)
+    pdf_src = _find_pdf(root, base, CONFIG.get("allowed_exts", [".pdf"]), CONFIG.get("pdf_subdirs", ["DOCS", "docs"]))
+    if (not pdf_src) or (not os.path.isfile(pdf_src)):
+        pdf_src = _find_pdf_by_contract_code(root, base, CONFIG.get("pdf_subdirs", ["DOCS", "docs"]))
+    if not pdf_src or not os.path.isfile(pdf_src):
+        raise HTTPException(status_code=404, detail="Source PDF not found")
+
+    reader = PdfReader(pdf_src)
+    total = len(reader.pages)
+    s = max(1, int(start_page))
+    e = min(total, int(end_page))
+    if s > e:
+        raise HTTPException(status_code=400, detail="Section page range invalid")
+
+    writer = PdfWriter()
+    for i in range(s - 1, e):
+        writer.add_page(reader.pages[i])
+
+    out = io.BytesIO()
+    writer.write(out)
+    out.seek(0)
+    filename = f"{base}_{section.get('label', body.section_key)}.pdf"
+    encoded_filename = quote(filename)
+    headers_resp = {"Content-Disposition": f"attachment; filename=download.pdf; filename*=UTF-8''{encoded_filename}"}
+    return StreamingResponse(out, media_type="application/pdf", headers=headers_resp)
 
 @app.post("/api/entry/remark", dependencies=[Depends(require_auth)])
 def entry_remark(body: EntryRemarkIn):
