@@ -307,6 +307,27 @@ def _find_pdf(root, base, exts, subdirs):
     return ""
 
 
+def _find_pdf_by_contract_code(root: str, code: str, subdirs: list[str]) -> str:
+    code_norm = _normalize_contract_code(code)
+    if not code_norm:
+        return ""
+    cand_dirs = [root] + [os.path.join(root, sd) for sd in (subdirs or [])]
+    for d in cand_dirs:
+        if not os.path.isdir(d):
+            continue
+        try:
+            for name in os.listdir(d):
+                if not name.lower().endswith(".pdf"):
+                    continue
+                stem = os.path.splitext(name)[0]
+                stem_norm = _normalize_contract_code(stem)
+                if code_norm and stem_norm and (code_norm in stem_norm or stem_norm in code_norm):
+                    p = os.path.join(d, name)
+                    if os.path.isfile(p):
+                        return p
+        except Exception:
+            continue
+
 def _normalize_contract_code(text: str) -> str:
     raw = str(text or "").strip()
     if not raw:
@@ -317,6 +338,13 @@ def _normalize_contract_code(text: str) -> str:
     return raw
 
 
+def _normalize_menu_file_name(text: str) -> str:
+    raw = str(text or "").strip()
+    if not raw:
+        return ""
+    # menu.xlsx 的“文件名”列可能带 .txt，仅移除这个后缀再参与匹配，其他内容保持不变
+    raw = re.sub(r"\.txt$", "", raw, flags=re.IGNORECASE)
+    return _normalize_contract_code(raw)
 def _resolve_menu_columns(headers: list[str]) -> dict:
     col_file = None
     col_type = None
@@ -366,7 +394,8 @@ def _load_menu_rows() -> list[dict]:
                 continue
             out.append({
                 "file_name": file_name,
-                "file_norm": _normalize_contract_code(file_name),
+
+                "file_norm": _normalize_menu_file_name(file_name),
                 "type_text": type_text,
                 "catalog": cat_text,
             })
@@ -394,8 +423,28 @@ def _parse_page_range(text: str) -> Optional[tuple[int, int, str]]:
     if m2:
         a = int(m2.group(1))
         return a, a, f"P{a}"
+
+    m3 = re.search(r"(?<!\d)(\d+)\s*[-~—－–至]\s*(\d+)(?!\d)", s)
+    if m3:
+        a, b = int(m3.group(1)), int(m3.group(2))
+        if a > b:
+            a, b = b, a
+        return a, b, f"P{a}-P{b}"
+    m4 = re.search(r"(?<!\d)(\d+)(?!\d)", s)
+    if m4:
+        a = int(m4.group(1))
+        return a, a, f"P{a}"
     return None
 
+
+def _normalize_page_label(text: str) -> str:
+    s = str(text or "").strip()
+    if not s:
+        return ""
+    meta = _parse_page_range(s)
+    if meta:
+        return meta[2]
+    return s
 
 def _menu_sections_for_contract(contract_code: str) -> list[dict]:
     code_norm = _normalize_contract_code(contract_code)
@@ -418,12 +467,19 @@ def _menu_sections_for_contract(contract_code: str) -> list[dict]:
         for m in matches:
             t = str(m.get("type_text", ""))
             if any(token in t for token in conf["match"]):
-                found = m
-                break
+
+                page_meta = _parse_page_range(m.get("catalog", ""))
+                if found is None:
+                    found = m
+                # 优先选择有页码的同类型条目，避免拿到空目录
+                if page_meta:
+                    found = m
+                    break
         if not found:
             continue
         page_meta = _parse_page_range(found.get("catalog", ""))
-        page_label = page_meta[2] if page_meta else str(found.get("catalog", "") or "")
+        page_label = _normalize_page_label(found.get("catalog", ""))
+
         sections.append({
             "key": key,
             "label": conf["label"],
@@ -1313,6 +1369,10 @@ def entry_section_download(body: EntrySectionDownloadIn):
     base = str(code).strip()
     root = os.path.dirname(real)
     pdf_src = _find_pdf(root, base, CONFIG.get("allowed_exts", [".pdf"]), CONFIG.get("pdf_subdirs", ["DOCS", "docs"]))
+
+    if (not pdf_src) or (not os.path.isfile(pdf_src)):
+        pdf_src = _find_pdf_by_contract_code(root, base, CONFIG.get("pdf_subdirs", ["DOCS", "docs"]))
+
     if not pdf_src or not os.path.isfile(pdf_src):
         raise HTTPException(status_code=404, detail="Source PDF not found")
 
