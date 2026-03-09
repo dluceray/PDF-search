@@ -436,10 +436,17 @@ function renderDetailSections(sections){
 }
 async function downloadSection(sectionKey){
   if (!detailContext || !sectionKey) return;
+  toast("正在准备分段下载...");
   const r = await fetch('/api/entry/section/download', {
     method:'POST',
     headers:{'Content-Type':'application/json','X-Auth': TOKEN},
-    body: JSON.stringify({source_file: detailContext.sourceFile, row_index: detailContext.rowIndex, section_key: sectionKey})
+    body: JSON.stringify({
+      source_file: detailContext.sourceFile,
+      row_index: detailContext.rowIndex,
+      section_key: sectionKey,
+      pdf_dl: detailContext.pdf_dl || "",
+      pdf_path: detailContext.pdf_path || ""
+    })
   });
   if(r.status===401){ localStorage.removeItem('X_AUTH'); TOKEN=''; setLoginUI(false); toast("登录失效，请重新登录"); closeDetailModal(); return; }
   if(!r.ok){
@@ -459,6 +466,7 @@ async function downloadSection(sectionKey){
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
+  toast("分段下载已开始");
 }
 
 function openDetailModal(){

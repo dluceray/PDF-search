@@ -320,7 +320,6 @@ def _find_pdf_by_contract_code(root: str, code: str, subdirs: list[str]) -> str:
                 if not name.lower().endswith(".pdf"):
                     continue
                 stem = os.path.splitext(name)[0]
-
                 stem_norm = _contract_compare_key(stem)
                 if code_norm and stem_norm and (code_norm in stem_norm or stem_norm in code_norm):
                     p = os.path.join(d, name)
@@ -328,7 +327,6 @@ def _find_pdf_by_contract_code(root: str, code: str, subdirs: list[str]) -> str:
                         return p
         except Exception:
             continue
-
     return ""
 
 
@@ -340,6 +338,30 @@ def _find_pdf_globally_by_contract_code(code: str) -> str:
         p = _find_pdf_by_contract_code(root, code, subdirs)
         if p and os.path.isfile(p):
             return p
+    return ""
+
+
+def _resolve_public_pdf_url_to_real(url_path: str) -> str:
+    raw = str(url_path or "").strip()
+    if not raw:
+        return ""
+    pure = raw.split("?", 1)[0]
+    prefixes = [CONFIG.get("download_prefix", "/dl/"), CONFIG.get("preview_prefix", "/files/")]
+    rel = ""
+    for p in prefixes:
+        p = str(p or "")
+        if p and pure.startswith(p):
+            rel = pure[len(p):]
+            break
+    if not rel:
+        return ""
+    rel = rel.lstrip("/")
+    base = os.path.realpath(CONFIG.get("public_base", "/data/contracts"))
+    real = os.path.realpath(os.path.join(base, rel))
+    if not (real == base or real.startswith(base + os.sep)):
+        return ""
+    if os.path.isfile(real):
+        return real
     return ""
 
 
@@ -362,7 +384,6 @@ def _normalize_menu_file_name(text: str) -> str:
     return _normalize_contract_code(raw)
 
 
-
 def _contract_compare_key(text: str) -> str:
     """仅用于匹配比较：去除分隔符差异，提高 menu/PDF 命中率，不改变原始展示内容。"""
     base = _normalize_contract_code(text)
@@ -373,10 +394,8 @@ def _resolve_menu_columns(headers: list[str]) -> dict:
     col_file = None
     col_type = None
     col_catalog = None
-
     preferred_type = None
     preferred_catalog = None
-
     for idx, h in enumerate(headers):
         txt = str(h or "").strip()
         if not txt:
@@ -384,7 +403,6 @@ def _resolve_menu_columns(headers: list[str]) -> dict:
         t = re.sub(r"\s+", "", txt)
         if col_file is None and ("文件名" in t or ("文件" in t and "名" in t)):
             col_file = idx
-
         if preferred_type is None and ("包含类型" in t or "类型包含" in t):
             preferred_type = idx
         if col_type is None and "类型" in t:
@@ -397,7 +415,6 @@ def _resolve_menu_columns(headers: list[str]) -> dict:
         col_type = preferred_type
     if preferred_catalog is not None:
         col_catalog = preferred_catalog
-
     return {"file": col_file, "type": col_type, "catalog": col_catalog}
 
 
@@ -512,9 +529,7 @@ def _menu_sections_for_contract(contract_code: str) -> list[dict]:
     menu_rows = _load_menu_rows()
     matches = []
     for row in menu_rows:
-
         file_norm = _contract_compare_key(row.get("file_norm", ""))
-
         if not file_norm:
             continue
         if code_norm in file_norm or file_norm in code_norm:
@@ -1150,6 +1165,8 @@ class EntrySectionDownloadIn(BaseModel):
     source_file: str
     row_index: int
     section_key: str
+    pdf_dl: Optional[str] = ""
+    pdf_path: Optional[str] = ""
 
 @app.get("/api/health")
 def health(): return {"ok": True, "ts": int(_utc_now_ts())}
@@ -1428,8 +1445,10 @@ def entry_section_download(body: EntrySectionDownloadIn):
         raise HTTPException(status_code=400, detail="Section page range invalid")
 
     base = str(code).strip()
+    pdf_src = _resolve_public_pdf_url_to_real(body.pdf_dl or body.pdf_path or "")
     root = os.path.dirname(real)
-    pdf_src = _find_pdf(root, base, CONFIG.get("allowed_exts", [".pdf"]), CONFIG.get("pdf_subdirs", ["DOCS", "docs"]))
+    if (not pdf_src) or (not os.path.isfile(pdf_src)):
+        pdf_src = _find_pdf(root, base, CONFIG.get("allowed_exts", [".pdf"]), CONFIG.get("pdf_subdirs", ["DOCS", "docs"]))
     if (not pdf_src) or (not os.path.isfile(pdf_src)):
         pdf_src = _find_pdf_by_contract_code(root, base, CONFIG.get("pdf_subdirs", ["DOCS", "docs"]))
     if (not pdf_src) or (not os.path.isfile(pdf_src)):
